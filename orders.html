@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>쇼피 고객 관리</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #root { min-height: 100%; }
+    body { background: #FFF8F5; font-family: 'Noto Sans KR', sans-serif; }
+    input[type=range] { height: 4px; cursor: pointer; }
+    select option { background: #fff; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #FFF2EC; }
+    ::-webkit-scrollbar-thumb { background: #E8C4B0; border-radius: 3px; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useRef } = React;
+
+// ── Supabase 설정 ─────────────────────────────────────────────
+const SB_URL_KEY  = 'shopee_sb_url';
+const SB_KEY_KEY  = 'shopee_sb_anon';
+function getSbUrl()  { return localStorage.getItem(SB_URL_KEY)  || ''; }
+function getSbAnon() { return localStorage.getItem(SB_KEY_KEY) || ''; }
+function saveSbConfig(url, anon) {
+  localStorage.setItem(SB_URL_KEY, url.trim());
+  localStorage.setItem(SB_KEY_KEY, anon.trim());
+}
+function isConfigured() {
+  const u = getSbUrl(), a = getSbAnon();
+  return u.startsWith('https://') && u.includes('.supabase.co') && a.startsWith('eyJ');
+}
+let _sb = isConfigured()
+  ? window.supabase.createClient(getSbUrl(), getSbAnon(), { auth: { storageKey: 'shopee-sb-auth' } })
+  : null;
+function reinitSb(url, anon) {
+  _sb = window.supabase.createClient(url, anon, { auth: { storageKey: 'shopee-sb-auth' } });
+}
+
+// ── 상수 ─────────────────────────────────────────────────────
+const CURRENCIES = {
+  MY: { code:"MYR", sym:"RM",  name:"말레이시아" },
+  SG: { code:"SGD", sym:"S$",  name:"싱가포르"   },
+  TW: { code:"TWD", sym:"NT$", name:"대만"       },
+  TH: { code:"THB", sym:"฿",   name:"태국"       },
+  PH: { code:"PHP", sym:"₱",   name:"필리핀"     },
+  VN: { code:"VND", sym:"₫",   name:"베트남"     },
+  ID: { code:"IDR", sym:"Rp",  name:"인도네시아" },
+};
+
+const STATUS = {
+  pending:   { label:"주문접수", color:"#6366f1", bg:"#eef2ff" },
+  shipped:   { label:"배송중",   color:"#d97706", bg:"#fef3c7" },
+  delivered: { label:"배송완료", color:"#16a34a", bg:"#dcfce7" },
+  returned:  { label:"반품",     color:"#dc2626", bg:"#fee2e2" },
+  cancelled: { label:"취소",     color:"#6b7280", bg:"#f3f4f6" },
+};
+
+const RATES0 = {MYR:310,SGD:1020,TWD:42,THB:38,PHP:24,VND:0.054,IDR:0.088};
+
+// ── 디자인 토큰 ───────────────────────────────────────────────
+const C = {
+  bg:"#FFF8F5", bgAlt:"#FFF2EC", white:"#FFFFFF",
+  border:"#F0D9CE", borderMd:"#E8C4B0",
+  acc:"#EE4D2D", accLight:"#FFF0EC", accMid:"#FF7043",
+  amber:"#FF9500", amberBg:"#FFF7E6",
+  txt:"#1A0F0A", txtMd:"#5C3D2E", txtSm:"#9E7B6E",
+  grn:"#16a34a", grnBg:"#dcfce7",
+  shadow:"rgba(238,77,45,0.08)", shadowMd:"rgba(238,77,45,0.14)",
+};
+const card = {background:C.white,border:`1px solid ${C.border}`,borderRadius:14,boxShadow:`0 2px 12px ${C.shadow}`};
+const inp  = {width:"100%",background:C.white,border:`1.5px solid ${C.border}`,borderRadius:10,padding:"9px 12px",color:C.txt,fontSize:13,fontFamily:"inherit",outline:"none",boxSizing:"border-box"};
+const lbl  = {fontSize:11,color:C.txtSm,display:"block",marginBottom:4,fontWeight:600,letterSpacing:".03em",textTransform:"uppercase"};
+const btnOr= {background:C.acc,color:"#fff",border:"none",borderRadius:10,padding:"10px 16px",fontSize:13,fontWeight:700,fontFamily:"inherit",cursor:"pointer",boxShadow:`0 4px 14px ${C.shadowMd}`};
+const btnGh= {background:C.white,color:C.acc,border:`1.5px solid ${C.acc}`,borderRadius:10,padding:"9px 16px",fontSize:13,fontWeight:700,fontFamily:"inherit",cursor:"pointer"};
+
+// ── 유틸 ─────────────────────────────────────────────────────
+const won = n => Math.round(n).toLocaleString()+"원";
+const ff  = (n,d=1) => Number(n).toFixed(d);
+function genOrderNo() {
+  const d = new Date();
+  const date = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+  const rand = String(Math.floor(Math.random()*90000)+10000);
+  return `ORD-${date}-${rand}`;
+}
+
+// ── 메인 앱 ──────────────────────────────────────────────────
+function App() {
+  const [tab, setTab]       = useState("orders"); // orders | stats | settings
+  const [orders, setOrders] = useState([]);
+  const [customers, setCustomers] = useState([]);
+  const [rates, setRates]   = useState(RATES0);
+  const [loading, setLoading] = useState(false);
+  const [toast, setToast]   = useState("");
+
+  // 설정 모달
+  const [sbModal,   setSbModal]   = useState(!isConfigured());
+  const [sbUrlInp,  setSbUrlInp]  = useState(getSbUrl());
+  const [sbAnonInp, setSbAnonInp] = useState(getSbAnon());
+  const [sbOk,      setSbOk]      = useState(isConfigured());
+
+  // 주문 폼
+  const [showForm, setShowForm]   = useState(false);
+  const [editOrder, setEditOrder] = useState(null);
+  const [F, setF] = useState({
+    order_no:"", customer_name:"", country:"MY",
+    product_name:"", quantity:"1",
+    price_local:"", currency:"MYR", cost_krw:"",
+    status:"pending", tracking_no:"",
+    order_date: new Date().toISOString().slice(0,10),
+    ship_date:"", memo:"", remind_at:"",
+  });
+  const set = k => v => setF(f=>({...f,[k]:v}));
+
+  // 필터
+  const [filterStatus,  setFilterStatus]  = useState("all");
+  const [filterCountry, setFilterCountry] = useState("all");
+  const [filterSearch,  setFilterSearch]  = useState("");
+
+  // 상세 모달
+  const [detailOrder, setDetailOrder] = useState(null);
+
+  const toast_ = msg => { setToast(msg); setTimeout(()=>setToast(""),2500); };
+
+  // 환율
+  useEffect(()=>{
+    fetch("https://api.exchangerate-api.com/v4/latest/KRW")
+      .then(r=>r.json()).then(d=>{
+        const r={...RATES0};
+        Object.keys(r).forEach(c=>{ if(d.rates[c]) r[c]=1/d.rates[c]; });
+        setRates(r);
+      }).catch(()=>{});
+  },[]);
+
+  // 데이터 로드
+  async function loadData() {
+    if (!_sb) return;
+    setLoading(true);
+    try {
+      const [{ data: od }, { data: cd }] = await Promise.all([
+        _sb.from("orders").select("*").order("created_at", { ascending: false }),
+        _sb.from("customers").select("*"),
+      ]);
+      setOrders(od || []);
+      setCustomers(cd || []);
+    } catch(e) { toast_("데이터 로드 실패: "+e.message); }
+    finally { setLoading(false); }
+  }
+
+  useEffect(()=>{ if(sbOk) loadData(); },[sbOk]);
+
+  // Supabase 설정 저장
+  function handleSaveSb() {
+    const url = sbUrlInp.trim(), anon = sbAnonInp.trim();
+    if (!url.includes('.supabase.co')) { toast_('URL 형식이 맞지 않아요'); return; }
+    if (!anon.startsWith('eyJ')) { toast_('Anon key 형식이 맞지 않아요'); return; }
+    saveSbConfig(url, anon);
+    reinitSb(url, anon);
+    setSbOk(true); setSbModal(false);
+    toast_('✅ Supabase 연결 완료!');
+  }
+
+  // 폼 초기화
+  function resetForm(orderNo) {
+    setF({
+      order_no: orderNo||genOrderNo(),
+      customer_name:"", country:"MY",
+      product_name:"", quantity:"1",
+      price_local:"", currency:"MYR", cost_krw:"",
+      status:"pending", tracking_no:"",
+      order_date: new Date().toISOString().slice(0,10),
+      ship_date:"", memo:"", remind_at:"",
+    });
+    setEditOrder(null);
+  }
+
+  // 주문 저장
+  async function saveOrder() {
+    if (!F.customer_name.trim()) { toast_("고객명을 입력해 주세요"); return; }
+    if (!F.product_name.trim())  { toast_("상품명을 입력해 주세요");  return; }
+    if (!_sb) { toast_("Supabase 설정이 필요해요"); return; }
+
+    const payload = {
+      order_no:      F.order_no || genOrderNo(),
+      customer_name: F.customer_name.trim(),
+      country:       F.country,
+      product_name:  F.product_name.trim(),
+      quantity:      +F.quantity||1,
+      price_local:   +F.price_local||null,
+      currency:      CURRENCIES[F.country]?.code||F.currency,
+      cost_krw:      +F.cost_krw||null,
+      status:        F.status,
+      tracking_no:   F.tracking_no.trim()||null,
+      order_date:    F.order_date||null,
+      ship_date:     F.ship_date||null,
+      memo:          F.memo.trim()||null,
+      remind_at:     F.remind_at||null,
+      updated_at:    new Date().toISOString(),
+    };
+
+    try {
+      if (editOrder) {
+        const { error } = await _sb.from("orders").update(payload).eq("id", editOrder.id);
+        if (error) throw error;
+        toast_("✅ 주문 수정 완료!");
+      } else {
+        const { error } = await _sb.from("orders").insert(payload);
+        if (error) throw error;
+        // 고객 재구매 카운트 업데이트
+        await updateCustomerCount(F.customer_name.trim(), F.country);
+        toast_("✅ 주문 등록 완료!");
+      }
+      setShowForm(false); setEditOrder(null);
+      await loadData();
+    } catch(e) { toast_("저장 실패: "+e.message); }
+  }
+
+  async function updateCustomerCount(name, country) {
+    const existing = customers.find(c=>c.name===name && c.country===country);
+    if (existing) {
+      await _sb.from("customers").update({ order_count: (existing.order_count||0)+1 }).eq("id", existing.id);
+    } else {
+      await _sb.from("customers").insert({ name, country, order_count:1 });
+    }
+  }
+
+  // 상태 빠른 변경
+  async function quickStatus(id, status) {
+    if (!_sb) return;
+    const extra = status==="shipped" ? { ship_date: new Date().toISOString().slice(0,10) } : {};
+    await _sb.from("orders").update({ status, ...extra, updated_at: new Date().toISOString() }).eq("id", id);
+    setOrders(prev=>prev.map(o=>o.id===id?{...o,status,...extra}:o));
+    toast_(`배송 상태 변경: ${STATUS[status].label}`);
+  }
+
+  // 삭제
+  async function deleteOrder(id) {
+    if (!window.confirm("삭제할까요?")) return;
+    await _sb.from("orders").delete().eq("id", id);
+    setOrders(prev=>prev.filter(o=>o.id!==id));
+    toast_("삭제됐어요");
+  }
+
+  // 수정 시작
+  function startEdit(o) {
+    setF({
+      order_no: o.order_no, customer_name: o.customer_name, country: o.country,
+      product_name: o.product_name, quantity: String(o.quantity||1),
+      price_local: String(o.price_local||""), currency: o.currency||"MYR",
+      cost_krw: String(o.cost_krw||""), status: o.status,
+      tracking_no: o.tracking_no||"",
+      order_date: o.order_date||"", ship_date: o.ship_date||"",
+      memo: o.memo||"", remind_at: o.remind_at?o.remind_at.slice(0,16):"",
+    });
+    setEditOrder(o); setShowForm(true); setDetailOrder(null);
+  }
+
+  // 필터링
+  const filtered = useMemo(()=>{
+    return orders.filter(o=>{
+      if (filterStatus!=="all" && o.status!==filterStatus) return false;
+      if (filterCountry!=="all" && o.country!==filterCountry) return false;
+      if (filterSearch) {
+        const q = filterSearch.toLowerCase();
+        if (!o.customer_name?.toLowerCase().includes(q) &&
+            !o.product_name?.toLowerCase().includes(q) &&
+            !o.order_no?.toLowerCase().includes(q)) return false;
+      }
+      return true;
+    });
+  },[orders, filterStatus, filterCountry, filterSearch]);
+
+  // 재구매 고객
+  const repeatCustomers = useMemo(()=>
+    customers.filter(c=>(c.order_count||0)>=2).map(c=>c.name)
+  ,[customers]);
+
+  // 매출 통계
+  const stats = useMemo(()=>{
+    const byCountry = {}, byProduct = {};
+    let totalKRW = 0;
+    orders.filter(o=>o.status==="delivered").forEach(o=>{
+      const r = rates[o.currency]||1;
+      const krw = (o.price_local||0)*r*o.quantity;
+      totalKRW += krw;
+      byCountry[o.country] = (byCountry[o.country]||0)+krw;
+      byProduct[o.product_name] = (byProduct[o.product_name]||0)+krw;
+    });
+    return { totalKRW, byCountry, byProduct };
+  },[orders, rates]);
+
+  // 리마인더 체크 (오늘 이내)
+  const reminders = useMemo(()=>
+    orders.filter(o=>{
+      if (!o.remind_at) return false;
+      const d = new Date(o.remind_at);
+      const now = new Date();
+      return d <= new Date(now.getTime()+24*60*60*1000);
+    })
+  ,[orders]);
+
+  // 국가 변경 시 통화 자동 설정
+  useEffect(()=>{
+    set("currency")(CURRENCIES[F.country]?.code||"MYR");
+  },[F.country]);
+
+  // ── 렌더 ────────────────────────────────────────────────────
+  return (
+    <div style={{background:C.bg,minHeight:"100vh",color:C.txt,fontFamily:"'DM Sans','Noto Sans KR',sans-serif"}}>
+
+      {/* 헤더 */}
+      <div style={{background:C.white,borderBottom:`1px solid ${C.border}`,boxShadow:`0 1px 8px ${C.shadow}`,padding:"0 20px"}}>
+        <div style={{maxWidth:900,margin:"0 auto",display:"flex",alignItems:"center",height:56,gap:12}}>
+          <a href="index.html" style={{background:C.acc,borderRadius:8,padding:"5px 11px",textDecoration:"none",boxShadow:`0 2px 8px ${C.shadowMd}`}}>
+            <span style={{color:"#fff",fontSize:12,fontWeight:800,letterSpacing:".06em"}}>SHOPEE</span>
+          </a>
+          <span style={{fontWeight:800,fontSize:16,color:C.txt}}>고객 관리</span>
+          {reminders.length>0 && (
+            <div style={{background:"#fee2e2",border:"1px solid #fca5a5",borderRadius:20,padding:"3px 10px",fontSize:11,color:"#dc2626",fontWeight:700}}>
+              🔔 리마인더 {reminders.length}건
+            </div>
+          )}
+          <div style={{marginLeft:"auto",display:"flex",gap:8}}>
+            <button onClick={()=>{setSbUrlInp(getSbUrl());setSbAnonInp(getSbAnon());setSbModal(true);}}
+              style={{background:sbOk?C.grnBg:"#fee2e2",border:`1px solid ${sbOk?"#86efac":"#fca5a5"}`,borderRadius:8,padding:"5px 10px",cursor:"pointer",fontSize:11,fontWeight:700,color:sbOk?C.grn:"#dc2626"}}>
+              {sbOk?"🔗 연결됨":"⚠️ 미설정"}
+            </button>
+            <button onClick={loadData} style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",cursor:"pointer",fontSize:11,color:C.txtSm,fontWeight:600}}>
+              {loading?"⟳ 로딩중":"↻ 새로고침"}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 탭 */}
+      <div style={{background:C.white,borderBottom:`1px solid ${C.border}`}}>
+        <div style={{maxWidth:900,margin:"0 auto",display:"flex"}}>
+          {[{k:"orders",label:`📦 주문 목록 (${orders.length})`},{k:"stats",label:"📊 매출 통계"},{k:"customers",label:`👥 고객 (${customers.length})`}].map(t=>(
+            <button key={t.k} onClick={()=>setTab(t.k)}
+              style={{flex:1,padding:"13px 8px",fontSize:13,fontWeight:700,fontFamily:"inherit",border:"none",
+                borderBottom:tab===t.k?`2.5px solid ${C.acc}`:"2.5px solid transparent",
+                background:"transparent",color:tab===t.k?C.acc:C.txtSm,cursor:"pointer"}}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{maxWidth:900,margin:"0 auto",padding:"20px 16px"}}>
+
+        {/* ── 주문 목록 탭 ── */}
+        {tab==="orders" && (
+          <div>
+            {/* 리마인더 배너 */}
+            {reminders.length>0 && (
+              <div style={{...card,marginBottom:16,padding:"12px 16px",background:"#fff7ed",border:"1px solid #fed7aa"}}>
+                <div style={{fontSize:12,fontWeight:700,color:"#c2410c",marginBottom:6}}>🔔 오늘 리마인더</div>
+                {reminders.map(o=>(
+                  <div key={o.id} style={{fontSize:12,color:"#7c2d12",marginBottom:3}}>
+                    · {o.customer_name} — {o.product_name} ({new Date(o.remind_at).toLocaleString("ko-KR",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})})
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* 액션 바 */}
+            <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
+              <button onClick={()=>{ resetForm(); setShowForm(true); }} style={{...btnOr,padding:"9px 16px"}}>
+                + 주문 등록
+              </button>
+              <input style={{...inp,width:180,padding:"8px 12px"}}
+                placeholder="🔍 고객명·상품명·주문번호"
+                value={filterSearch} onChange={e=>setFilterSearch(e.target.value)}/>
+              <select style={{...inp,width:110,padding:"8px 10px"}}
+                value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}>
+                <option value="all">전체 상태</option>
+                {Object.entries(STATUS).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
+              </select>
+              <select style={{...inp,width:120,padding:"8px 10px"}}
+                value={filterCountry} onChange={e=>setFilterCountry(e.target.value)}>
+                <option value="all">전체 국가</option>
+                {Object.entries(CURRENCIES).map(([k,v])=><option key={k} value={k}>{v.name}</option>)}
+              </select>
+              <span style={{fontSize:12,color:C.txtSm,marginLeft:"auto"}}>{filtered.length}건</span>
+            </div>
+
+            {/* 주문 목록 */}
+            {filtered.length===0 ? (
+              <div style={{...card,textAlign:"center",padding:"50px 20px"}}>
+                <div style={{fontSize:40,marginBottom:12,opacity:.3}}>📦</div>
+                <div style={{fontSize:14,color:C.txtMd,fontWeight:600,marginBottom:6}}>주문이 없어요</div>
+                <div style={{fontSize:12,color:C.txtSm}}>위 버튼으로 주문을 등록해 보세요</div>
+              </div>
+            ) : (
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                {filtered.map(o=>{
+                  const st  = STATUS[o.status]||STATUS.pending;
+                  const cv  = CURRENCIES[o.country];
+                  const isRepeat = repeatCustomers.includes(o.customer_name);
+                  const profitKRW = o.price_local && o.cost_krw
+                    ? Math.round(o.price_local * (rates[o.currency]||1) * o.quantity - o.cost_krw * o.quantity)
+                    : null;
+                  return (
+                    <div key={o.id} style={{...card,overflow:"hidden"}}>
+                      <div style={{padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:4}}>
+                            <span style={{fontSize:13,fontWeight:800,color:C.txt}}>{o.customer_name}</span>
+                            {isRepeat && <span style={{fontSize:10,fontWeight:700,background:"#fef3c7",color:"#b45309",borderRadius:4,padding:"1px 6px"}}>재구매</span>}
+                            <span style={{fontSize:10,fontWeight:700,background:st.bg,color:st.color,borderRadius:4,padding:"2px 7px"}}>{st.label}</span>
+                            <span style={{fontSize:10,color:C.txtSm}}>{cv?.name}</span>
+                          </div>
+                          <div style={{fontSize:12,color:C.txtMd,marginBottom:2}}>{o.product_name} × {o.quantity}</div>
+                          <div style={{fontSize:11,color:C.txtSm,display:"flex",gap:8,flexWrap:"wrap"}}>
+                            <span>{o.order_no}</span>
+                            <span>{o.order_date}</span>
+                            {o.tracking_no && <span>📦 {o.tracking_no}</span>}
+                            {profitKRW!==null && <span style={{color:profitKRW>=0?C.grn:"#dc2626",fontWeight:600}}>{profitKRW>=0?"+":""}{won(profitKRW)}</span>}
+                          </div>
+                        </div>
+                        {/* 가격 */}
+                        {o.price_local && (
+                          <div style={{textAlign:"right",flexShrink:0}}>
+                            <div style={{fontSize:14,fontWeight:800,color:C.acc}}>{cv?.sym}{(+o.price_local).toLocaleString()}</div>
+                            <div style={{fontSize:10,color:C.txtSm}}>≈ {won((+o.price_local)*(rates[o.currency]||1))}</div>
+                          </div>
+                        )}
+                      </div>
+                      {/* 빠른 상태 변경 + 버튼 */}
+                      <div style={{padding:"8px 16px 12px",borderTop:`1px solid ${C.border}`,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                        {Object.entries(STATUS).map(([k,v])=>(
+                          <button key={k} onClick={()=>quickStatus(o.id,k)}
+                            style={{fontSize:10,fontWeight:700,padding:"3px 9px",borderRadius:5,cursor:"pointer",fontFamily:"inherit",border:"none",
+                              background:o.status===k?v.color:C.bg,
+                              color:o.status===k?"#fff":C.txtSm}}>
+                            {v.label}
+                          </button>
+                        ))}
+                        <div style={{marginLeft:"auto",display:"flex",gap:6}}>
+                          <button onClick={()=>setDetailOrder(o)}
+                            style={{...btnGh,padding:"5px 12px",fontSize:11,borderRadius:7}}>상세</button>
+                          <button onClick={()=>startEdit(o)}
+                            style={{background:C.amberBg,border:`1px solid #fcd34d`,color:"#92400e",borderRadius:7,padding:"5px 12px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>수정</button>
+                          <button onClick={()=>deleteOrder(o.id)}
+                            style={{background:"#fee2e2",border:"1px solid #fca5a5",color:"#dc2626",borderRadius:7,padding:"5px 12px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>삭제</button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── 매출 통계 탭 ── */}
+        {tab==="stats" && (
+          <div>
+            {/* 요약 카드 */}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:20}}>
+              {[
+                {label:"총 주문",       val:`${orders.length}건`,                         color:C.txt},
+                {label:"배송완료",      val:`${orders.filter(o=>o.status==="delivered").length}건`, color:C.grn},
+                {label:"총 매출(KRW)", val:won(stats.totalKRW),                           color:C.acc},
+              ].map(({label,val,color})=>(
+                <div key={label} style={{...card,padding:"16px",textAlign:"center"}}>
+                  <div style={{fontSize:11,color:C.txtSm,marginBottom:6,fontWeight:600,textTransform:"uppercase",letterSpacing:".04em"}}>{label}</div>
+                  <div style={{fontSize:18,fontWeight:800,color}}>{val}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* 국가별 매출 */}
+            <div style={{...card,padding:18,marginBottom:16}}>
+              <div style={{fontSize:12,fontWeight:700,color:C.txtSm,letterSpacing:".08em",textTransform:"uppercase",marginBottom:14}}>🌏 국가별 매출</div>
+              {Object.entries(stats.byCountry).sort((a,b)=>b[1]-a[1]).length===0
+                ? <div style={{fontSize:13,color:C.txtSm,textAlign:"center",padding:"20px 0"}}>배송 완료된 주문이 없어요</div>
+                : Object.entries(stats.byCountry).sort((a,b)=>b[1]-a[1]).map(([code,krw])=>{
+                    const cv = CURRENCIES[code];
+                    const pct = Math.round((krw/stats.totalKRW)*100);
+                    return (
+                      <div key={code} style={{marginBottom:12}}>
+                        <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:4}}>
+                          <span style={{fontWeight:600,color:C.txt}}>{cv?.name}</span>
+                          <span style={{fontFamily:"'DM Mono',monospace",color:C.acc,fontWeight:700}}>{won(krw)} <span style={{color:C.txtSm,fontWeight:400}}>({pct}%)</span></span>
+                        </div>
+                        <div style={{height:6,background:C.bgAlt,borderRadius:3,overflow:"hidden"}}>
+                          <div style={{height:"100%",width:`${pct}%`,background:C.acc,borderRadius:3}}/>
+                        </div>
+                      </div>
+                    );
+                  })
+              }
+            </div>
+
+            {/* 상품별 매출 */}
+            <div style={{...card,padding:18}}>
+              <div style={{fontSize:12,fontWeight:700,color:C.txtSm,letterSpacing:".08em",textTransform:"uppercase",marginBottom:14}}>📦 상품별 매출</div>
+              {Object.entries(stats.byProduct).sort((a,b)=>b[1]-a[1]).length===0
+                ? <div style={{fontSize:13,color:C.txtSm,textAlign:"center",padding:"20px 0"}}>배송 완료된 주문이 없어요</div>
+                : Object.entries(stats.byProduct).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([name,krw],i)=>(
+                    <div key={name} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
+                      <span style={{fontSize:11,color:C.txtSm,minWidth:20,fontWeight:700}}>#{i+1}</span>
+                      <span style={{flex:1,fontSize:13,color:C.txt,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{name}</span>
+                      <span style={{fontFamily:"'DM Mono',monospace",fontSize:12,fontWeight:700,color:C.acc,flexShrink:0}}>{won(krw)}</span>
+                    </div>
+                  ))
+              }
+            </div>
+          </div>
+        )}
+
+        {/* ── 고객 탭 ── */}
+        {tab==="customers" && (
+          <div>
+            {customers.length===0 ? (
+              <div style={{...card,textAlign:"center",padding:"50px 20px"}}>
+                <div style={{fontSize:40,marginBottom:12,opacity:.3}}>👥</div>
+                <div style={{fontSize:14,color:C.txtMd,fontWeight:600}}>등록된 고객이 없어요</div>
+                <div style={{fontSize:12,color:C.txtSm,marginTop:6}}>주문을 등록하면 자동으로 고객이 추가돼요</div>
+              </div>
+            ) : (
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                {[...customers].sort((a,b)=>(b.order_count||0)-(a.order_count||0)).map(c=>{
+                  const cv = CURRENCIES[c.country];
+                  const cOrders = orders.filter(o=>o.customer_name===c.name&&o.country===c.country);
+                  const totalKRW = cOrders
+                    .filter(o=>o.status==="delivered")
+                    .reduce((sum,o)=>(o.price_local||0)*(rates[o.currency]||1)*o.quantity+sum,0);
+                  return (
+                    <div key={c.id} style={{...card,padding:"14px 16px"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                        <div style={{width:36,height:36,borderRadius:"50%",background:C.accLight,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:700,color:C.acc,flexShrink:0}}>
+                          {c.name[0]}
+                        </div>
+                        <div style={{flex:1}}>
+                          <div style={{display:"flex",alignItems:"center",gap:6}}>
+                            <span style={{fontSize:14,fontWeight:700,color:C.txt}}>{c.name}</span>
+                            {(c.order_count||0)>=2 && <span style={{fontSize:10,fontWeight:700,background:"#fef3c7",color:"#b45309",borderRadius:4,padding:"1px 6px"}}>재구매</span>}
+                          </div>
+                          <div style={{fontSize:11,color:C.txtSm,marginTop:2}}>{cv?.name} · 주문 {c.order_count||0}회</div>
+                        </div>
+                        <div style={{textAlign:"right"}}>
+                          <div style={{fontSize:13,fontWeight:700,color:C.acc}}>{won(totalKRW)}</div>
+                          <div style={{fontSize:10,color:C.txtSm}}>총 구매액</div>
+                        </div>
+                      </div>
+                      {c.contact && <div style={{fontSize:12,color:C.txtMd}}>📞 {c.contact}</div>}
+                      {c.address  && <div style={{fontSize:12,color:C.txtMd}}>📍 {c.address}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── 주문 등록/수정 모달 ── */}
+      {showForm && (
+        <div onClick={e=>{ if(e.target===e.currentTarget){setShowForm(false);setEditOrder(null);} }}
+          style={{position:"fixed",inset:0,background:"rgba(26,15,10,.5)",backdropFilter:"blur(8px)",zIndex:100,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:20,width:"100%",maxWidth:520,maxHeight:"92vh",overflowY:"auto",boxShadow:`0 24px 60px rgba(238,77,45,.15)`}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"18px 22px 14px",borderBottom:`1px solid ${C.border}`,position:"sticky",top:0,background:C.white,zIndex:1}}>
+              <div style={{fontSize:15,fontWeight:800,color:C.txt}}>{editOrder?"주문 수정":"주문 등록"}</div>
+              <button onClick={()=>{setShowForm(false);setEditOrder(null);}} style={{background:C.bg,border:`1px solid ${C.border}`,color:C.txtSm,borderRadius:8,width:30,height:30,cursor:"pointer",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+            </div>
+            <div style={{padding:"18px 22px"}}>
+              {/* 주문번호 */}
+              <div style={{marginBottom:12}}>
+                <label style={lbl}>주문번호</label>
+                <div style={{display:"flex",gap:8}}>
+                  <input style={{...inp,fontFamily:"'DM Mono',monospace",fontSize:12}} value={F.order_no} onChange={e=>set("order_no")(e.target.value)}
+                    onFocus={e=>e.target.style.borderColor=C.acc} onBlur={e=>e.target.style.borderColor=C.border}/>
+                  <button onClick={()=>set("order_no")(genOrderNo())}
+                    style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:8,padding:"0 12px",fontSize:11,color:C.txtSm,cursor:"pointer",whiteSpace:"nowrap",fontFamily:"inherit"}}>재생성</button>
+                </div>
+              </div>
+              {/* 고객명 + 국가 */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+                <div>
+                  <label style={lbl}>고객명 *</label>
+                  <input style={inp} placeholder="고객 이름" value={F.customer_name} onChange={e=>set("customer_name")(e.target.value)}
+                    onFocus={e=>e.target.style.borderColor=C.acc} onBlur={e=>e.target.style.borderColor=C.border}/>
+                </div>
+                <div>
+                  <label style={lbl}>판매 국가 *</label>
+                  <select style={inp} value={F.country} onChange={e=>set("country")(e.target.value)}>
+                    {Object.entries(CURRENCIES).map(([k,v])=><option key={k} value={k}>{v.name} ({v.code})</option>)}
+                  </select>
+                </div>
+              </div>
+              {/* 상품명 + 수량 */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:12,marginBottom:12}}>
+                <div>
+                  <label style={lbl}>상품명 *</label>
+                  <input style={inp} placeholder="상품명" value={F.product_name} onChange={e=>set("product_name")(e.target.value)}
+                    onFocus={e=>e.target.style.borderColor=C.acc} onBlur={e=>e.target.style.borderColor=C.border}/>
+                </div>
+                <div style={{width:70}}>
+                  <label style={lbl}>수량</label>
+                  <input style={inp} type="number" min="1" value={F.quantity} onChange={e=>set("quantity")(e.target.value)}
+                    onFocus={e=>e.target.style.borderColor=C.acc} onBlur={e=>e.target.style.borderColor=C.border}/>
+                </div>
+              </div>
+              {/* 판매가 + 매입가 */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+                <div>
+                  <label style={lbl}>판매가 ({CURRENCIES[F.country]?.code})</label>
+                  <input style={inp} type="number" placeholder="150" value={F.price_local} onChange={e=>set("price_local")(e.target.value)}
+                    onFocus={e=>e.target.style.borderColor=C.acc} onBlur={e=>e.target.style.borderColor=C.border}/>
+                </div>
+                <div>
+                  <label style={lbl}>매입가 (원)</label>
+                  <input style={inp} type="number" placeholder="30000" value={F.cost_krw} onChange={e=>set("cost_krw")(e.target.value)}
+                    onFocus={e=>e.target.style.borderColor=C.acc} onBlur={e=>e.target.style.borderColor=C.border}/>
+                </div>
+              </div>
+              {/* 상태 + 주문일 */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+                <div>
+                  <label style={lbl}>배송 상태</label>
+                  <select style={inp} value={F.status} onChange={e=>set("status")(e.target.value)}>
+                    {Object.entries(STATUS).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={lbl}>주문일</label>
+                  <input style={inp} type="date" value={F.order_date} onChange={e=>set("order_date")(e.target.value)}
+                    onFocus={e=>e.target.style.borderColor=C.acc} onBlur={e=>e.target.style.borderColor=C.border}/>
+                </div>
+              </div>
+              {/* 운송장 + 배송일 */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+                <div>
+                  <label style={lbl}>운송장 번호</label>
+                  <input style={inp} placeholder="운송장 번호" value={F.tracking_no} onChange={e=>set("tracking_no")(e.target.value)}
+                    onFocus={e=>e.target.style.borderColor=C.acc} onBlur={e=>e.target.style.borderColor=C.border}/>
+                </div>
+                <div>
+                  <label style={lbl}>배송일</label>
+                  <input style={inp} type="date" value={F.ship_date} onChange={e=>set("ship_date")(e.target.value)}
+                    onFocus={e=>e.target.style.borderColor=C.acc} onBlur={e=>e.target.style.borderColor=C.border}/>
+                </div>
+              </div>
+              {/* 리마인더 */}
+              <div style={{marginBottom:12}}>
+                <label style={lbl}>🔔 리마인더 (팔로업 일시)</label>
+                <input style={inp} type="datetime-local" value={F.remind_at} onChange={e=>set("remind_at")(e.target.value)}
+                  onFocus={e=>e.target.style.borderColor=C.acc} onBlur={e=>e.target.style.borderColor=C.border}/>
+              </div>
+              {/* 메모 */}
+              <div style={{marginBottom:18}}>
+                <label style={lbl}>메모</label>
+                <textarea style={{...inp,minHeight:60,resize:"vertical"}} placeholder="특이사항, 요청사항 등"
+                  value={F.memo} onChange={e=>set("memo")(e.target.value)}
+                  onFocus={e=>e.target.style.borderColor=C.acc} onBlur={e=>e.target.style.borderColor=C.border}/>
+              </div>
+              <button onClick={saveOrder} style={{...btnOr,width:"100%",padding:"13px",fontSize:14,borderRadius:12}}>
+                {editOrder?"수정 저장":"주문 등록"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── 주문 상세 모달 ── */}
+      {detailOrder && (
+        <div onClick={e=>{ if(e.target===e.currentTarget) setDetailOrder(null); }}
+          style={{position:"fixed",inset:0,background:"rgba(26,15,10,.5)",backdropFilter:"blur(8px)",zIndex:100,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:20,width:"100%",maxWidth:460,boxShadow:`0 24px 60px rgba(238,77,45,.15)`}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"18px 22px 14px",borderBottom:`1px solid ${C.border}`}}>
+              <div>
+                <div style={{fontSize:15,fontWeight:800,color:C.txt}}>{detailOrder.customer_name}</div>
+                <div style={{fontSize:11,color:C.txtSm,marginTop:2}}>{detailOrder.order_no}</div>
+              </div>
+              <button onClick={()=>setDetailOrder(null)} style={{background:C.bg,border:`1px solid ${C.border}`,color:C.txtSm,borderRadius:8,width:30,height:30,cursor:"pointer",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+            </div>
+            <div style={{padding:"16px 22px"}}>
+              {[
+                ["국가",     CURRENCIES[detailOrder.country]?.name],
+                ["상품",     `${detailOrder.product_name} × ${detailOrder.quantity}`],
+                ["판매가",   detailOrder.price_local?`${CURRENCIES[detailOrder.country]?.sym}${(+detailOrder.price_local).toLocaleString()} ≈ ${won((+detailOrder.price_local)*(rates[detailOrder.currency]||1))}`:"—"],
+                ["매입가",   detailOrder.cost_krw?won(detailOrder.cost_krw):"—"],
+                ["순이익",   detailOrder.price_local&&detailOrder.cost_krw?won(Math.round((+detailOrder.price_local)*(rates[detailOrder.currency]||1)*detailOrder.quantity-(+detailOrder.cost_krw)*detailOrder.quantity)):"—"],
+                ["상태",     STATUS[detailOrder.status]?.label],
+                ["주문일",   detailOrder.order_date||"—"],
+                ["배송일",   detailOrder.ship_date||"—"],
+                ["운송장",   detailOrder.tracking_no||"—"],
+                ["리마인더", detailOrder.remind_at?new Date(detailOrder.remind_at).toLocaleString("ko-KR"):"—"],
+                ["메모",     detailOrder.memo||"—"],
+              ].map(([k,v])=>(
+                <div key={k} style={{display:"grid",gridTemplateColumns:"90px 1fr",borderBottom:`1px solid ${C.border}`,padding:"8px 0"}}>
+                  <span style={{fontSize:12,color:C.txtSm,fontWeight:600}}>{k}</span>
+                  <span style={{fontSize:13,color:C.txt}}>{v}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{padding:"12px 22px 18px",display:"flex",gap:8,borderTop:`1px solid ${C.border}`}}>
+              <button onClick={()=>startEdit(detailOrder)} style={{...btnOr,flex:1}}>수정</button>
+              <button onClick={()=>{ navigator.clipboard.writeText(
+                `주문번호: ${detailOrder.order_no}\n고객: ${detailOrder.customer_name}\n상품: ${detailOrder.product_name} ×${detailOrder.quantity}\n운송장: ${detailOrder.tracking_no||"미입력"}`
+              ).then(()=>toast_("복사됐어요!")); }}
+                style={{...btnGh,flex:1}}>복사</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Supabase 설정 모달 ── */}
+      {sbModal && (
+        <div onClick={e=>{ if(e.target===e.currentTarget&&sbOk) setSbModal(false); }}
+          style={{position:"fixed",inset:0,background:"rgba(26,15,10,.55)",backdropFilter:"blur(10px)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:20,width:"100%",maxWidth:440,boxShadow:`0 24px 60px rgba(238,77,45,.12)`}}>
+            <div style={{padding:"20px 22px 16px",borderBottom:`1px solid ${C.border}`}}>
+              <div style={{display:"flex",alignItems:"center",gap:12}}>
+                <div style={{width:40,height:40,borderRadius:12,background:C.accLight,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>🔗</div>
+                <div>
+                  <div style={{fontSize:15,fontWeight:800,color:C.txt}}>Supabase 연결 설정</div>
+                  <div style={{fontSize:11,color:C.txtSm,marginTop:1}}>계산기(index.html)와 같은 값을 입력하세요</div>
+                </div>
+                {sbOk && <button onClick={()=>setSbModal(false)} style={{marginLeft:"auto",background:C.bg,border:`1px solid ${C.border}`,color:C.txtSm,borderRadius:8,width:30,height:30,cursor:"pointer",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>}
+              </div>
+            </div>
+            <div style={{padding:"18px 22px 22px"}}>
+              <div style={{marginBottom:12}}>
+                <label style={lbl}>Project URL</label>
+                <input style={{...inp,fontFamily:"'DM Mono',monospace",fontSize:12}}
+                  placeholder="https://xxxxxxxx.supabase.co"
+                  value={sbUrlInp} onChange={e=>setSbUrlInp(e.target.value)}
+                  onFocus={e=>e.target.style.borderColor=C.acc} onBlur={e=>e.target.style.borderColor=C.border}/>
+              </div>
+              <div style={{marginBottom:18}}>
+                <label style={lbl}>Anon public key</label>
+                <textarea style={{...inp,minHeight:68,resize:"vertical",fontFamily:"'DM Mono',monospace",fontSize:11}}
+                  placeholder="eyJhbGci..."
+                  value={sbAnonInp} onChange={e=>setSbAnonInp(e.target.value)}
+                  onFocus={e=>e.target.style.borderColor=C.acc} onBlur={e=>e.target.style.borderColor=C.border}/>
+              </div>
+              <button onClick={handleSaveSb} style={{...btnOr,width:"100%",padding:"12px",fontSize:13,borderRadius:12}}>
+                🔗 저장하고 연결하기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 토스트 */}
+      {toast && (
+        <div style={{position:"fixed",bottom:28,left:"50%",transform:"translateX(-50%)",background:C.txt,color:"#fff",padding:"10px 24px",borderRadius:30,fontSize:13,fontWeight:700,zIndex:9999,pointerEvents:"none",whiteSpace:"nowrap",boxShadow:"0 6px 24px rgba(26,15,10,.25)"}}>
+          {toast}
+        </div>
+      )}
+
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500;600&family=Noto+Sans+KR:wght@400;500;700;800&display=swap');
+        * { box-sizing: border-box; }
+        button:hover { opacity: 0.88; }
+        a:hover { opacity: 0.88; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+      `}</style>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+</body>
+</html>
