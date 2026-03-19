@@ -1,0 +1,1492 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+  <meta name="apple-mobile-web-app-title" content="쇼피툴"/>
+  <meta name="theme-color" content="#EE4D2D"/>
+  <link rel="manifest" id="pwa-manifest" href="manifest.json"/>
+  <title>쇼피 셀러 마진 계산기</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #root { height: 100%; }
+    body { background: #FFF8F5; }
+    input[type=range] { height: 4px; cursor: pointer; }
+    select option { background: #fff; color: #1A0F0A; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    button:hover { opacity: 0.88; }
+    a:hover { opacity: 0.88; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #FFF2EC; }
+    ::-webkit-scrollbar-thumb { background: #E8C4B0; border-radius: 3px; }
+    /* ── 반응형 레이아웃 ─────────────────────────────── */
+    @media (max-width: 760px) {
+      .form-grid { grid-template-columns: 1fr !important; }
+    }
+
+    /* ── 모바일 (640px 이하) ──────────────────────────── */
+    @media (max-width: 640px) {
+      /* 하단 탭바 표시 */
+      .mobile-bottom-nav { display: flex !important; }
+      /* 본문 하단 여백 (탭바 높이) */
+      .pwa-content { padding-bottom: calc(72px + env(safe-area-inset-bottom)) !important; }
+      /* 터치 영역 */
+      button { min-height: 44px; }
+      select, input[type=date] { min-height: 44px; font-size: 16px !important; }
+      input[type=number], input[type=text], textarea { font-size: 16px !important; }
+      /* 헤더 환율 정보 숨김 */
+      .hide-mobile { display: none !important; }
+      /* 헤더 높이 축소 */
+      .mobile-header { height: 48px !important; padding: 0 12px !important; }
+      /* 탭 버튼 크기 */
+      .tab-btn { padding: 10px 12px !important; font-size: 12px !important; }
+      /* 카드 패딩 축소 */
+      .card-mobile { padding: 14px !important; }
+      /* 전체 패딩 */
+      .page-pad { padding: 14px 12px !important; }
+    }
+
+    /* ── PC (641px 이상) ──────────────────────────────── */
+    @media (min-width: 641px) {
+      .mobile-bottom-nav { display: none !important; }
+      .mobile-only { display: none !important; }
+    }
+    /* ── PC 3컬럼 레이아웃 (1000px 이상) ────────────── */
+    @media (min-width: 1000px) {
+      .pc-three-col {
+        display: grid !important;
+        grid-template-columns: minmax(0,380px) minmax(0,320px) minmax(0,280px) !important;
+        gap: 16px !important;
+        max-width: 1060px !important;
+        padding: 16px !important;
+        padding-bottom: 32px !important;
+      }
+      .pc-hide-tab { display: none !important; }
+      .pc-col-mid { display: block !important; }
+      .pc-list-panel { display: block !important; }
+      /* PC에서는 form 탭 항상 표시 */
+      #pc-form-section { display: grid !important; }
+      /* PC에서 목록 탭 숨김 */
+      .mobile-list-tab { display: none !important; }
+      /* PC 우측 검사 패널 sticky */
+      .insp-panel { position: sticky; top: 16px; }
+    }
+    @media (max-width: 999px) {
+      .pc-col-mid { display: none !important; }
+      .pc-list-panel { display: none !important; }
+    }
+
+    /* ── 모바일 하단 탭바 ────────────────────────────── */
+    .mobile-bottom-nav {
+      display: none;
+      position: fixed; bottom: 0; left: 0; right: 0;
+      background: #fff;
+      border-top: 1.5px solid #F0D9CE;
+      z-index: 500;
+      padding-bottom: env(safe-area-inset-bottom);
+      box-shadow: 0 -4px 20px rgba(238,77,45,0.10);
+    }
+    .mobile-bottom-nav a {
+      flex: 1; display: flex; flex-direction: column; align-items: center;
+      justify-content: center; padding: 10px 4px 8px;
+      text-decoration: none;
+      font-size: 11px; font-weight: 700;
+      color: #9E7B6E; gap: 4px;
+      min-height: 60px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .mobile-bottom-nav a.active { color: #EE4D2D; }
+    .mobile-bottom-nav a.active .nav-icon-wrap {
+      background: #FFF0EC; border-radius: 12px; padding: 4px 16px;
+    }
+    .mobile-bottom-nav a .nav-icon { font-size: 22px; line-height: 1; }
+
+    /* safe area */
+    body { padding-top: env(safe-area-inset-top); }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" data-presets="react">
+    const { useState, useEffect, useRef, useMemo } = React;
+
+    // ── Supabase 설정 (localStorage에서 로드) ────────────────
+    const SB_URL_KEY  = 'shopee_sb_url';
+    const SB_KEY_KEY  = 'shopee_sb_anon';
+
+    function getSbUrl()  { return localStorage.getItem(SB_URL_KEY)  || ''; }
+    function getSbAnon() { return localStorage.getItem(SB_KEY_KEY) || ''; }
+    function saveSbConfig(url, anon) {
+      localStorage.setItem(SB_URL_KEY,  url.trim());
+      localStorage.setItem(SB_KEY_KEY, anon.trim());
+    }
+    function clearSbConfig() {
+      localStorage.removeItem(SB_URL_KEY);
+      localStorage.removeItem(SB_KEY_KEY);
+    }
+    function isConfigured() {
+      const u = getSbUrl(), a = getSbAnon();
+      return u.startsWith('https://') && u.includes('.supabase.co') && a.startsWith('eyJ');
+    }
+
+    // supabase 클라이언트 — 설정이 있을 때만 생성 (중복 인스턴스 방지)
+    let _sbClient = isConfigured()
+      ? window.supabase.createClient(getSbUrl(), getSbAnon(), {
+          auth: { storageKey: 'shopee-sb-auth' }
+        })
+      : null;
+
+    function reinitSupabase(url, anon) {
+      _sbClient = window.supabase.createClient(url, anon, {
+        auth: { storageKey: 'shopee-sb-auth' }
+      });
+    }
+
+    function getEdgeFnUrl() {
+      return getSbUrl() + '/functions/v1/ai-proxy';
+    }
+
+    // ── 익명 로그인 사용 ─────────────────────────────────────
+    // Supabase 대시보드 Authentication → Providers → Anonymous 활성화 필요
+
+
+
+// ── 상수 ────────────────────────────────────────────────────────
+const CURRENCIES = {
+  MY: { code:"MYR", sym:"RM",  name:"말레이시아", sellerUrl:"https://seller.shopee.com.my", searchUrl:"https://shopee.com.my/search?keyword=" },
+  SG: { code:"SGD", sym:"S$",  name:"싱가포르",   sellerUrl:"https://seller.shopee.sg",     searchUrl:"https://shopee.sg/search?keyword=" },
+  TW: { code:"TWD", sym:"NT$", name:"대만",       sellerUrl:"https://seller.shopee.tw",     searchUrl:"https://shopee.tw/search?keyword=" },
+  TH: { code:"THB", sym:"฿",   name:"태국",       sellerUrl:"https://seller.shopee.co.th",  searchUrl:"https://shopee.co.th/search?keyword=" },
+  PH: { code:"PHP", sym:"₱",   name:"필리핀",     sellerUrl:"https://seller.shopee.ph",     searchUrl:"https://shopee.ph/search?keyword=" },
+  VN: { code:"VND", sym:"₫",   name:"베트남",     sellerUrl:"https://banhang.shopee.vn",    searchUrl:"https://shopee.vn/search?keyword=" },
+  ID: { code:"IDR", sym:"Rp",  name:"인도네시아", sellerUrl:"https://seller.shopee.co.id",  searchUrl:"https://shopee.co.id/search?keyword=" },
+};
+// 구글 번역 무료 API 사용 (API 키 불필요)
+async function googleTranslate(text, targetLang) {
+  try {
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=ko&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    return data[0]?.map(x => x[0]).join('') || text;
+  } catch { return text; }
+}
+const RATES0 = {MYR:310,SGD:1020,TWD:42,THB:38,PHP:24,VND:0.054,IDR:0.088};
+
+// ── 유틸 ────────────────────────────────────────────────────────
+const won  = n => Math.round(n).toLocaleString()+"원";
+const ff   = (n,d=1) => Number(n).toFixed(d);
+const mCol = m => m>=30?"#16a34a":m>=15?"#d97706":m>=0?"#ea580c":"#dc2626";
+const mLbl = m => m>=30?{t:"우수",bg:"#dcfce7",c:"#15803d"}
+                :m>=15?{t:"양호",bg:"#fef3c7",c:"#b45309"}
+                :m>=0 ?{t:"주의",bg:"#ffedd5",c:"#c2410c"}
+                :      {t:"적자",bg:"#fee2e2",c:"#b91c1c"};
+
+async function fileToBase64(file) {
+  return new Promise((res,rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result.split(",")[1]);
+    r.onerror = () => rej(new Error("읽기 실패"));
+    r.readAsDataURL(file);
+  });
+}
+
+// ── 디자인 토큰 ───────────────────────────────────────────────
+const C = {
+  bg:       "#FFF8F5",
+  bgAlt:    "#FFF2EC",
+  white:    "#FFFFFF",
+  border:   "#F0D9CE",
+  borderMd: "#E8C4B0",
+  acc:      "#EE4D2D",
+  accLight: "#FFF0EC",
+  accMid:   "#FF7043",
+  amber:    "#FF9500",
+  amberBg:  "#FFF7E6",
+  txt:      "#1A0F0A",
+  txtMd:    "#5C3D2E",
+  txtSm:    "#9E7B6E",
+  grn:      "#16a34a",
+  grnBg:    "#dcfce7",
+  shadow:   "rgba(238,77,45,0.08)",
+  shadowMd: "rgba(238,77,45,0.14)",
+};
+
+// ── 공통 스타일 ───────────────────────────────────────────────
+const card  = {background:C.white,border:`1px solid ${C.border}`,borderRadius:14,boxShadow:`0 2px 12px ${C.shadow}`};
+const inp   = {width:"100%",background:C.white,border:`1.5px solid ${C.border}`,borderRadius:10,padding:"10px 13px",color:C.txt,fontSize:13,fontFamily:"inherit",outline:"none",boxSizing:"border-box",transition:"border-color .15s"};
+const lbl   = {fontSize:11.5,color:C.txtSm,display:"block",marginBottom:5,fontWeight:600,letterSpacing:".03em",textTransform:"uppercase"};
+const btnOr = {background:C.acc,color:"#fff",border:"none",borderRadius:10,padding:"11px 16px",fontSize:13,fontWeight:700,fontFamily:"inherit",cursor:"pointer",letterSpacing:".02em",boxShadow:`0 4px 14px ${C.shadowMd}`};
+const btnGh = {background:C.white,color:C.acc,border:`1.5px solid ${C.acc}`,borderRadius:10,padding:"10px 16px",fontSize:13,fontWeight:700,fontFamily:"inherit",cursor:"pointer"};
+
+// ── 메인 ──────────────────────────────────────────────────────
+function App() {
+  const [tab,     setTab]     = useState("form");
+  const [rates,   setRates]   = useState(RATES0);
+  const [items,   setItems]   = useState([]);
+  const [uid,     setUid]     = useState(1);
+  const [sheet,   setSheet]   = useState(null);
+  const [toast,   setToast]   = useState("");
+  // 번역 & 검색 상태
+  const [xlLoad,    setXlLoad]    = useState(false);
+  const [xlResult,  setXlResult]  = useState(null); // {en, localMap}
+  const [searchOpen,setSearchOpen]= useState(false);
+
+  // 시장가 직접 입력 상태
+  const [marketPrices, setMarketPrices] = useState({}); // {MY: 150, SG: 45, ...}
+  const [showMarket,   setShowMarket]   = useState(false);
+  const [inspOpen,  setInspOpen]  = useState(true);
+
+  // ── Supabase 설정 모달 상태 ──
+  const [sbModal,   setSbModal]   = useState(false);
+  const [sbUrlInp,  setSbUrlInp]  = useState('');
+  const [sbAnonInp, setSbAnonInp] = useState('');
+  const [sbConfigOk,setSbConfigOk]= useState(() => isConfigured());
+
+  // ── Auth 상태 ──
+  const [session,   setSession]   = useState(null);   // Supabase session
+  const [authReady, setAuthReady] = useState(false);  // 초기 세션 로드 완료
+
+
+  const [F, setF] = useState({
+    name:"", desc:"", cat:"전자기기", country:"MY",
+    costKRW:"", sellLocal:"", origLocal:"",
+    stock:"100", weight:"",
+    shopFee:3, payFee:2, shipLocal:"10", etcKRW:"0",
+    setBuy:"1",   // 세트 구성: 매입 수량 (몇 개를 매입?)
+    setSell:"1",  // 세트 구성: 판매 수량 (몇 개짜리 세트로 판매?)
+  });
+  const set = k => v => setF(f=>({...f,[k]:v}));
+
+  useEffect(()=>{
+    fetch("https://api.exchangerate-api.com/v4/latest/KRW")
+      .then(r=>r.json()).then(d=>{
+        const r={...RATES0};
+        Object.keys(r).forEach(c=>{ if(d.rates[c]) r[c]=1/d.rates[c]; });
+        setRates(r);
+      }).catch(()=>{});
+  },[]);
+
+  const cur  = CURRENCIES[F.country];
+  const rate = rates[cur.code];
+  const toast_ = msg => { setToast(msg); setTimeout(()=>setToast(""),2500); };
+
+  // ── Supabase 미설정 시 모달 자동 오픈 ─────────────────────────
+  useEffect(() => {
+    if (!isConfigured()) setSbModal(true);
+  }, []);
+
+  // ── Supabase 설정 저장 ────────────────────────────────────────
+  function handleSaveSbConfig() {
+    const url  = sbUrlInp.trim();
+    const anon = sbAnonInp.trim();
+    if (!url.startsWith('https://') || !url.includes('.supabase.co')) {
+      toast_('Project URL 형식이 맞지 않아요 (https://xxx.supabase.co)');
+      return;
+    }
+    if (!anon.startsWith('eyJ')) {
+      toast_('Anon Key 형식이 맞지 않아요 (eyJ... 로 시작)');
+      return;
+    }
+    saveSbConfig(url, anon);
+    reinitSupabase(url, anon);  // 새 클라이언트 생성 (storageKey 동일)
+    setAuthReady(false);
+    setSession(null);
+    setSbConfigOk(true);
+    setSbModal(false);
+    toast_('✅ Supabase 연결 설정 완료!');
+  }
+
+  function handleClearSbConfig() {
+    clearSbConfig();
+    setSbConfigOk(false);
+    setSbUrlInp('');
+    setSbAnonInp('');
+    setSbModal(true);
+  }
+
+  // ── 익명 자동 로그인 ─────────────────────────────────────
+  async function autoLogin() {
+    try {
+      const { data, error } = await _sbClient.auth.signInAnonymously();
+      if (error) {
+        console.error('익명 로그인 실패:', error.message);
+      } else if (data?.session) {
+        setSession(data.session);
+      }
+    } catch(e) {
+      console.error('익명 로그인 오류:', e);
+    } finally {
+      setAuthReady(true);
+    }
+  }
+
+  // ── Supabase 세션 감지 ──────────────────────────────────────
+  useEffect(() => {
+    if (!isConfigured()) { setAuthReady(true); return; }
+
+    _sbClient.auth.getSession().then(async ({ data: { session } }) => {
+      if (session) {
+        setSession(session);
+        setAuthReady(true);
+      } else {
+        await autoLogin();
+      }
+    }).catch(async () => {
+      await autoLogin();
+    });
+
+    const { data: { subscription } } = _sbClient.auth.onAuthStateChange((_event, sess) => {
+      setSession(sess);
+      if (sess) setAuthReady(true);
+    });
+    return () => subscription.unsubscribe();
+  }, [sbConfigOk]);
+
+
+
+  // ── 실시간 자동검사 엔진 ────────────────────────────────────────
+  const BANNED_WORDS = ["무료배송","최저가","최고급","100%정품","공식","인증","보장","할인","특가","이벤트","세일","당일발송","빠른배송","무료","원가","도매","대량"];
+  const SPECIAL_RE   = /[!@#$%^&*(){}\[\]|\\<>]/g;
+
+  // 카테고리별 금지어
+  const CAT_RULES = {
+    "전자기기":  { banned:["의약품","식품","화장품"], minDesc:80, reqWords:["충전","호환","보증"] },
+    "패션/의류":  { banned:["의약품","식품"], minDesc:60, reqWords:["소재","사이즈","색상"] },
+    "뷰티/화장품":{ banned:["의약","치료","효능","효과"], minDesc:80, reqWords:["성분","용량","사용법"] },
+    "생활용품":  { banned:["의약품"], minDesc:50, reqWords:[] },
+    "스포츠":    { banned:["의약품","화장품"], minDesc:50, reqWords:[] },
+    "식품":      { banned:["의약","치료","다이어트 보장"], minDesc:100, reqWords:["원산지","용량","보관방법"] },
+    "기타":      { banned:[], minDesc:40, reqWords:[] },
+  };
+
+  // 국가별 최소 가격 (현지 통화)
+  const MIN_PRICE = { MYR:1, SGD:0.5, TWD:30, THB:30, PHP:50, VND:5000, IDR:1000 };
+
+  const inspection = useMemo(() => {
+    const issues = [];
+    const name  = F.name.trim();
+    const desc  = F.desc.trim();
+    const sell     = +F.sellLocal;
+    const setBuy   = Math.max(1, +F.setBuy  || 1);
+    const setSell  = Math.max(1, +F.setSell || 1);
+    const cost     = (+F.costKRW) * (setSell / setBuy); // 세트 원가
+    const cat   = F.cat;
+    const rule  = CAT_RULES[cat] || CAT_RULES["기타"];
+
+    // ── ① 상품명 검사 ──────────────────────────────────────────
+    const nameGroup = { id:"name", label:"상품명", items:[] };
+
+    if (!name) {
+      nameGroup.items.push({ level:"error", msg:"상품명을 입력해 주세요" });
+    } else {
+      // 길이
+      if (name.length < 10)
+        nameGroup.items.push({ level:"error", msg:`너무 짧아요 (${name.length}자 / 최소 10자)` });
+      else if (name.length > 120)
+        nameGroup.items.push({ level:"error", msg:`너무 길어요 (${name.length}자 / 최대 120자)` });
+      else if (name.length < 25)
+        nameGroup.items.push({ level:"warn",  msg:`조금 더 구체적으로 (${name.length}자 / 권장 25자+)` });
+      else
+        nameGroup.items.push({ level:"pass",  msg:`길이 적정 (${name.length}자)` });
+
+      // 특수문자
+      const specials = name.match(SPECIAL_RE);
+      if (specials && specials.length > 0)
+        nameGroup.items.push({ level:"error", msg:`금지 특수문자 포함: ${[...new Set(specials)].join(" ")}` });
+      else
+        nameGroup.items.push({ level:"pass",  msg:"특수문자 이상 없음" });
+
+      // 금지어
+      const foundBanned = BANNED_WORDS.filter(w => name.includes(w));
+      if (foundBanned.length > 0)
+        nameGroup.items.push({ level:"error", msg:`금지어 포함: ${foundBanned.join(", ")}` });
+      else
+        nameGroup.items.push({ level:"pass",  msg:"금지어 없음" });
+
+      // 연속 공백/대문자 남용
+      if (/\s{2,}/.test(name))
+        nameGroup.items.push({ level:"warn", msg:"연속 공백이 있어요" });
+      if ((name.match(/[A-Z]/g)||[]).length > name.length * 0.5 && name.length > 5)
+        nameGroup.items.push({ level:"warn", msg:"대문자가 과도하게 많아요" });
+    }
+    issues.push(nameGroup);
+
+    // ── ② 상품 설명 품질 검사 ──────────────────────────────────
+    const descGroup = { id:"desc", label:"상품 설명", items:[] };
+
+    if (!desc) {
+      descGroup.items.push({ level:"warn", msg:"설명이 없어요 (판매율에 영향)" });
+    } else {
+      // 길이
+      if (desc.length < rule.minDesc)
+        descGroup.items.push({ level:"warn", msg:`설명 부족 (${desc.length}자 / ${cat} 권장 ${rule.minDesc}자+)` });
+      else
+        descGroup.items.push({ level:"pass", msg:`설명 길이 충분 (${desc.length}자)` });
+
+      // 이모지
+      const emojiCount = (desc.match(/\p{Emoji}/gu)||[]).length;
+      if (emojiCount === 0)
+        descGroup.items.push({ level:"warn", msg:"이모지를 추가하면 클릭률이 올라요" });
+      else if (emojiCount > 20)
+        descGroup.items.push({ level:"warn", msg:`이모지 과다 (${emojiCount}개 / 권장 20개 이하)` });
+      else
+        descGroup.items.push({ level:"pass", msg:`이모지 ${emojiCount}개 사용 중` });
+
+      // 카테고리 필수 키워드
+      const missingKw = rule.reqWords.filter(w => !desc.includes(w) && !name.includes(w));
+      if (missingKw.length > 0)
+        descGroup.items.push({ level:"warn", msg:`권장 키워드 누락: ${missingKw.join(", ")}` });
+      else if (rule.reqWords.length > 0)
+        descGroup.items.push({ level:"pass", msg:"카테고리 핵심 키워드 포함" });
+
+      // 카테고리별 금지어
+      const catBanned = rule.banned.filter(w => desc.includes(w));
+      if (catBanned.length > 0)
+        descGroup.items.push({ level:"error", msg:`${cat} 카테고리 금지어: ${catBanned.join(", ")}` });
+      else
+        descGroup.items.push({ level:"pass", msg:"카테고리 규정 위반 없음" });
+    }
+    issues.push(descGroup);
+
+    // ── ③ 가격 정책 검사 ──────────────────────────────────────
+    const priceGroup = { id:"price", label:"가격 정책", items:[] };
+
+    if (!sell) {
+      priceGroup.items.push({ level:"error", msg:"판매가를 입력해 주세요" });
+    } else {
+      const minP = MIN_PRICE[cur.code] || 1;
+      if (sell < minP)
+        priceGroup.items.push({ level:"error", msg:`최소 판매가 미달 (${cur.sym}${minP} 이상 필요)` });
+      else
+        priceGroup.items.push({ level:"pass", msg:`최소가 기준 충족 (${cur.sym}${sell})` });
+
+      // 정가가 있을 때 할인율
+      if (F.origLocal && +F.origLocal > 0) {
+        const disc = Math.round((1 - sell / +F.origLocal) * 100);
+        if (+F.origLocal <= sell)
+          priceGroup.items.push({ level:"error", msg:"정가가 판매가보다 낮거나 같아요" });
+        else if (disc > 90)
+          priceGroup.items.push({ level:"warn", msg:`할인율 ${disc}% — 너무 높으면 신뢰도 저하` });
+        else
+          priceGroup.items.push({ level:"pass", msg:`할인율 ${disc}% (정상 범위)` });
+      }
+
+      // 마진율
+      if (cost && sell) {
+        const sf=+F.shopFee, pf=+F.payFee, ship=+F.shipLocal||0, etc=+F.etcKRW||0;
+        const sellKRW=sell*rate, feeKRW=sellKRW*(sf+pf)/100, shipKRW=ship*rate;
+        const margin = ((sellKRW - cost - feeKRW - shipKRW - etc) / sellKRW) * 100;
+        if (margin < 0)
+          priceGroup.items.push({ level:"error", msg:`적자 판매 중 (마진율 ${margin.toFixed(1)}%)` });
+        else if (margin < 10)
+          priceGroup.items.push({ level:"warn", msg:`마진율 위험 (${margin.toFixed(1)}% / 권장 10%+)` });
+        else if (margin < 20)
+          priceGroup.items.push({ level:"warn", msg:`마진율 보통 (${margin.toFixed(1)}% / 권장 20%+)` });
+        else
+          priceGroup.items.push({ level:"pass", msg:`마진율 양호 (${margin.toFixed(1)}%)` });
+      }
+    }
+    issues.push(priceGroup);
+
+    // ── ④ 카테고리 규정 검사 ──────────────────────────────────
+    const catGroup = { id:"cat", label:"카테고리 규정", items:[] };
+
+    // 식품 무게 필수
+    if (cat === "식품" && !F.weight)
+      catGroup.items.push({ level:"warn", msg:"식품은 무게 입력을 권장해요" });
+    else if (F.weight && +F.weight > 0)
+      catGroup.items.push({ level:"pass", msg:`무게 ${F.weight}kg 입력됨` });
+
+    // 뷰티 설명 필수
+    if (cat === "뷰티/화장품" && desc.length < 80)
+      catGroup.items.push({ level:"warn", msg:"뷰티 카테고리는 성분·용량 설명 필수" });
+
+    // 전자기기 무게 권장
+    if (cat === "전자기기" && !F.weight)
+      catGroup.items.push({ level:"warn", msg:"전자기기는 무게 입력을 권장해요 (배송비 계산)" });
+
+    // 재고
+    if (!F.stock || +F.stock < 1)
+      catGroup.items.push({ level:"error", msg:"재고 수량을 입력해 주세요" });
+    else if (+F.stock < 10)
+      catGroup.items.push({ level:"warn", msg:`재고 부족 (${F.stock}개 / 권장 10개+)` });
+    else
+      catGroup.items.push({ level:"pass", msg:`재고 ${F.stock}개` });
+
+    // 수수료 설정 확인
+    if (+F.shopFee === 0)
+      catGroup.items.push({ level:"warn", msg:"쇼피 수수료 0% — 정확한지 확인해 주세요" });
+    else
+      catGroup.items.push({ level:"pass", msg:`수수료 설정 완료 (${F.shopFee}% + ${F.payFee}%)` });
+
+    if (catGroup.items.length === 0)
+      catGroup.items.push({ level:"pass", msg:"카테고리 규정 이상 없음" });
+
+    issues.push(catGroup);
+
+    // 전체 점수 계산
+    const allItems = issues.flatMap(g => g.items);
+    const errors  = allItems.filter(i => i.level === "error").length;
+    const warns   = allItems.filter(i => i.level === "warn").length;
+    const passes  = allItems.filter(i => i.level === "pass").length;
+    const total   = allItems.length;
+    const score   = total > 0 ? Math.round((passes / total) * 100) : 0;
+
+    return { groups: issues, errors, warns, passes, score };
+  }, [F, cur, rate]);
+
+
+    // ── 번역 + 쇼피 검색 (구글 번역 무료 API) ──────────────────
+  // 국가별 현지어 코드
+  const LOCALE_MAP = {MY:"ms",SG:"en",TW:"zh-TW",TH:"th",PH:"en",VN:"vi",ID:"id"};
+
+  async function translateAndSearch() {
+    if(!F.name.trim()){ toast_("상품명을 먼저 입력해 주세요!"); return; }
+    setXlLoad(true); setXlResult(null);
+    try {
+      // 영어 번역
+      const enName = await googleTranslate(F.name, "en");
+      // 현지어 번역 (국가별)
+      const localMap = {};
+      await Promise.all(Object.entries(CURRENCIES).map(async ([code, cv]) => {
+        const lang = LOCALE_MAP[code] || "en";
+        localMap[code] = lang === "en" ? enName : await googleTranslate(F.name, lang);
+      }));
+      setXlResult({ en: enName, localMap });
+      setSearchOpen(true);
+      toast_("🌐 번역 완료! 아래 링크로 쇼피 검색해 보세요");
+    } catch(e) {
+      toast_("번역 실패: " + e.message);
+    } finally { setXlLoad(false); }
+  }
+
+  // ── 상품 추가 ─────────────────────────────────────────────────
+  function addItem() {
+    const name=F.name.trim(), costEach=+F.costKRW, sell=+F.sellLocal;
+    if(!name||!costEach||!sell){ toast_("상품명·매입가·판매가를 입력해 주세요."); return; }
+    const setBuy  = Math.max(1, +F.setBuy  || 1); // 매입 수량 (1개씩 살 때)
+    const setSell = Math.max(1, +F.setSell || 1); // 세트 판매 수량
+    // 세트 원가 = 개당 매입가 × 세트에 들어가는 개수
+    // ex) 1개씩 매입 → 3개 세트 판매: costKRW = costEach × (setSell/setBuy)
+    const costKRW = costEach * (setSell / setBuy);
+    const sf=+F.shopFee, pf=+F.payFee, ship=+F.shipLocal||0, etc=+F.etcKRW||0;
+    const sellKRW=sell*rate, feeKRW=sellKRW*(sf+pf)/100, shipKRW=ship*rate;
+    const totalCost=costKRW+feeKRW+shipKRW+etc;
+    const profit=sellKRW-totalCost, margin=(profit/sellKRW)*100;
+    const isSet = setBuy!==1||setSell!==1;
+    setItems(prev=>[...prev,{
+      id:uid, name, desc:F.desc, cat:F.cat, country:F.country, cur, rate,
+      costEach,     // 개당 매입가
+      costKRW,      // 세트 원가 (계산에 사용)
+      setBuy, setSell, isSet,
+      sellLocal:sell, origLocal:+F.origLocal||null, sellKRW,
+      shopFee:sf, payFee:pf, shipLocal:ship, shipKRW, etcKRW:etc,
+      feeKRW, totalCost, profit, margin,
+      stock:+F.stock||100, weight:+F.weight||null,
+    }]);
+    setUid(n=>n+1);
+    setF(f=>({...f,name:"",desc:"",costKRW:"",sellLocal:"",origLocal:"",weight:"",setBuy:"1",setSell:"1"}));
+    toast_("✅ 상품 추가 완료!"); setTab("list");
+  }
+
+  function copyAll(p) {
+    const disc = p.origLocal?Math.round((1-p.sellLocal/p.origLocal)*100):null;
+    const txt = [
+      "=== 쇼피 상품 등록 정보 ===","",
+      `상품명: ${p.name}`,`카테고리: ${p.cat}`,`판매 국가: ${p.cur.name}`,`재고: ${p.stock}개`,
+      p.weight?`무게: ${p.weight}kg`:"","",
+      `판매가: ${p.cur.sym} ${ff(p.sellLocal)}`,
+      p.origLocal?`정가: ${p.cur.sym} ${ff(p.origLocal)}`:"",
+      disc?`할인율: ${disc}%`:"","",
+      `매입가: ${won(p.costKRW)}`,`수수료: ${won(p.feeKRW)}`,`배송비: ${won(p.shipKRW)}`,
+      `총 원가: ${won(p.totalCost)}`,`순이익: ${p.profit>=0?"+":""}${won(p.profit)}`,`마진율: ${ff(p.margin)}%`,
+      p.desc?`\n상품 설명:\n${p.desc}`:"",
+    ].filter(Boolean).join("\n");
+    navigator.clipboard.writeText(txt).then(()=>toast_("📋 전체 정보 복사 완료!"));
+  }
+
+  // ── 이미지 분석 ───────────────────────────────────────────────
+
+
+  // ── 섹션 제목 ─────────────────────────────────────────────────
+  const Sec = ({title,no}) => (
+    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+      {no && <span style={{width:22,height:22,borderRadius:6,background:C.acc,color:"#fff",fontSize:11,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{no}</span>}
+      <span style={{fontSize:11,fontWeight:700,color:C.txtSm,letterSpacing:".1em",textTransform:"uppercase"}}>{title}</span>
+      <span style={{flex:1,height:1,background:C.border}}></span>
+    </div>
+  );
+
+  // ── Sheet 모달 ────────────────────────────────────────────────
+  const Sheet = ({p}) => {
+    const [chk,setChk] = useState({});
+    const disc = p.origLocal?Math.round((1-p.sellLocal/p.origLocal)*100):null;
+    const Row = ({k,v,vc,bold}) => (
+      <div style={{display:"grid",gridTemplateColumns:"110px 1fr",borderBottom:`1px solid ${C.border}`}}>
+        <div style={{padding:"9px 12px",fontSize:12,color:C.txtSm,background:C.bg,borderRight:`1px solid ${C.border}`,fontWeight:600}}>{k}</div>
+        <div style={{padding:"9px 12px",fontSize:13,display:"flex",alignItems:"center",justifyContent:"space-between",gap:6}}>
+          <span style={{color:vc||C.txt,fontWeight:bold?700:500}}>{v}</span>
+          <button onClick={()=>navigator.clipboard.writeText(v).then(()=>toast_("복사!"))}
+            style={{background:C.bgAlt,border:`1px solid ${C.border}`,color:C.txtSm,borderRadius:6,padding:"2px 8px",fontSize:10,cursor:"pointer",flexShrink:0,fontWeight:600}}>복사</button>
+        </div>
+      </div>
+    );
+    const checks=[
+      {k:"c1",t:"상품명 입력",r:true},{k:"c2",t:"카테고리 선택",r:true},
+      {k:"c3",t:"대표 이미지 업로드 (최소 1장, 권장 9장)",r:true},
+      {k:"c4",t:`판매가 입력: ${p.cur.sym} ${ff(p.sellLocal)}`,r:true},
+      ...(p.origLocal?[{k:"c5",t:"정가 입력 → 할인 배지 표시",r:false}]:[]),
+      {k:"c6",t:`재고 수량: ${p.stock}개`,r:true},
+      {k:"c7",t:"상품 설명 입력",r:false},
+      {k:"c8",t:"배송 정보 설정",r:true},
+      {k:"c9",t:"미리보기 확인 후 최종 등록",r:true},
+    ];
+    return (
+      <div onClick={e=>e.target===e.currentTarget&&setSheet(null)}
+        style={{position:"fixed",inset:0,background:"rgba(26,15,10,.5)",backdropFilter:"blur(8px)",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+        <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:20,width:"100%",maxWidth:620,maxHeight:"92vh",overflowY:"auto",boxShadow:`0 24px 60px rgba(238,77,45,.15)`}}>
+          {/* 헤더 */}
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"18px 22px",borderBottom:`1px solid ${C.border}`,position:"sticky",top:0,background:C.white,zIndex:1}}>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <div style={{background:C.acc,borderRadius:10,padding:"6px 12px",display:"flex",alignItems:"center",gap:6}}>
+                <span style={{color:"#fff",fontSize:11,fontWeight:800,letterSpacing:".08em"}}>SHOPEE</span>
+              </div>
+              <div>
+                <div style={{fontSize:15,fontWeight:800,color:C.txt}}>{p.name}</div>
+                <div style={{fontSize:11,color:C.txtSm,marginTop:1}}>등록 정보 시트</div>
+              </div>
+            </div>
+            <button onClick={()=>setSheet(null)} style={{background:C.bg,border:`1px solid ${C.border}`,color:C.txtSm,borderRadius:8,width:32,height:32,cursor:"pointer",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+          </div>
+          <div style={{padding:"18px 22px"}}>
+            <Sec title="기본 정보" no="①"/>
+            <div style={{border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden",marginBottom:18}}>
+              <Row k="상품명" v={p.name}/><Row k="카테고리" v={p.cat}/>
+              <Row k="판매 국가" v={`${p.cur.name} (${p.cur.code})`}/>
+              <Row k="재고" v={`${p.stock}개`}/>
+              {p.weight&&<Row k="무게" v={`${p.weight}kg`}/>}
+            </div>
+            <Sec title="가격 설정" no="②"/>
+            <div style={{border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden",marginBottom:18}}>
+              <Row k="판매가" v={`${p.cur.sym} ${ff(p.sellLocal)}`} vc={C.acc} bold/>
+              {p.origLocal&&<Row k="정가" v={`${p.cur.sym} ${ff(p.origLocal)}`}/>}
+              {disc&&<Row k="할인율" v={`${disc}%`} vc={C.amber} bold/>}
+              <Row k="원화 환산" v={won(p.sellKRW)}/>
+            </div>
+            <Sec title="원가 분석 (내부용)" no="③"/>
+            <div style={{border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden",marginBottom:18}}>
+              {p.isSet
+                ? <Row k="매입가" v={`${won(p.costEach)} × ${p.setSell}/${p.setBuy} = ${won(p.costKRW)}`} vc="#92400e"/>
+                : <Row k="매입가" v={won(p.costKRW)}/>
+              }
+              <Row k="수수료" v={won(p.feeKRW)}/>
+              <Row k="배송비" v={won(p.shipKRW)}/><Row k="총 원가" v={won(p.totalCost)} bold/>
+              <Row k="순이익" v={`${p.profit>=0?"+":""}${won(p.profit)}`} vc={mCol(p.margin)} bold/>
+              <Row k="마진율" v={`${ff(p.margin)}%`} vc={mCol(p.margin)} bold/>
+            </div>
+            {p.desc&&<>
+              <Sec title="상품 설명" no="④"/>
+              <div style={{position:"relative",marginBottom:18}}>
+                <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px 70px 13px 14px",fontSize:13,lineHeight:1.8,whiteSpace:"pre-wrap",color:C.txt}}>{p.desc}</div>
+                <button onClick={()=>navigator.clipboard.writeText(p.desc).then(()=>toast_("복사!"))}
+                  style={{position:"absolute",top:10,right:10,background:C.white,border:`1px solid ${C.border}`,color:C.txtSm,borderRadius:6,padding:"3px 9px",fontSize:10,cursor:"pointer",fontWeight:600}}>복사</button>
+              </div>
+            </>}
+            <Sec title="등록 체크리스트" no={p.desc?"⑤":"④"}/>
+            <ul style={{listStyle:"none",border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden",marginBottom:8}}>
+              {checks.map((c,i)=>(
+                <li key={c.k} onClick={()=>setChk(x=>({...x,[c.k]:!x[c.k]}))}
+                  style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",fontSize:12.5,borderBottom:i<checks.length-1?`1px solid ${C.border}`:"none",cursor:"pointer",background:chk[c.k]?C.grnBg:"transparent",color:chk[c.k]?C.grn:C.txtMd,transition:"background .15s"}}>
+                  <input type="checkbox" checked={!!chk[c.k]} onChange={()=>{}} style={{width:15,height:15,accentColor:C.grn,flexShrink:0}}/>
+                  <span style={{flex:1}}>{c.t}</span>
+                  <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:5,background:c.r?C.accLight:"#fef3c7",color:c.r?C.acc:"#b45309"}}>{c.r?"필수":"권장"}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div style={{display:"flex",gap:10,padding:"14px 22px 20px",borderTop:`1px solid ${C.border}`,position:"sticky",bottom:0,background:C.white}}>
+            <button onClick={()=>copyAll(p)} style={{...btnOr,flex:1}}>📋 전체 복사</button>
+            <a href={`${p.cur.searchUrl}${encodeURIComponent(p.name)}`} target="_blank" rel="noreferrer"
+              style={{...btnGh,textDecoration:"none",display:"flex",alignItems:"center",gap:5,whiteSpace:"nowrap"}}>🔍 쇼피 검색</a>
+            <a href={p.cur.sellerUrl} target="_blank" rel="noreferrer"
+              style={{background:C.bg,border:`1px solid ${C.border}`,color:C.txtMd,borderRadius:10,padding:"10px 14px",fontSize:13,fontWeight:700,textDecoration:"none",display:"flex",alignItems:"center",gap:5,whiteSpace:"nowrap"}}>🛒 셀러센터</a>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+
+    // ── 렌더 ──────────────────────────────────────────────────────
+  return (
+    <div style={{background:C.bg,minHeight:"100vh",color:C.txt,fontFamily:"'DM Sans','Noto Sans KR',sans-serif"}}>
+
+      {/* 헤더 */}
+      <div style={{background:C.white,borderBottom:`1px solid ${C.border}`,boxShadow:`0 1px 8px ${C.shadow}`,padding:"0 20px"}}>
+        <div className="mobile-header" style={{maxWidth:640,margin:"0 auto",display:"flex",alignItems:"center",height:56,gap:8,padding:"0 16px"}}>
+          <div style={{background:C.acc,borderRadius:8,padding:"5px 10px",display:"flex",alignItems:"center",flexShrink:0,boxShadow:`0 2px 8px ${C.shadowMd}`}}>
+            <span style={{color:"#fff",fontSize:12,fontWeight:800,letterSpacing:".06em"}}>SHOPEE</span>
+          </div>
+          <div style={{flex:1,minWidth:0,display:"flex",alignItems:"center",gap:8}}>
+            <div style={{minWidth:0}}>
+              <span style={{fontWeight:800,fontSize:15,color:C.txt,whiteSpace:"nowrap"}}>셀러 마진 계산기</span>
+              <span className="hide-mobile" style={{fontSize:11,color:C.txtSm,marginLeft:6,fontWeight:500}}>Seller Profit Calculator</span>
+            </div>
+            <a href="orders.html"
+              style={{background:C.accLight,border:`1px solid #fcd5c8`,borderRadius:8,padding:"5px 10px",textDecoration:"none",display:"flex",alignItems:"center",gap:4,fontSize:12,fontWeight:700,color:C.acc,flexShrink:0,whiteSpace:"nowrap"}}>
+              📦 주문 관리
+            </a>
+          </div>
+          <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
+            <div className="hide-mobile" style={{background:C.accLight,border:`1px solid #fcd5c8`,borderRadius:8,padding:"5px 12px",display:"flex",alignItems:"center",gap:6}}>
+              <span style={{width:6,height:6,background:C.grn,borderRadius:"50%",flexShrink:0,boxShadow:`0 0 0 2px ${C.grnBg}`}}></span>
+              <span style={{color:C.acc,fontFamily:"'DM Mono',monospace",fontSize:12,fontWeight:600,whiteSpace:"nowrap"}}>
+                1 {cur.code} = {rate>=1?Math.round(rate).toLocaleString():rate.toFixed(4)} KRW
+              </span>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              {/* Supabase 연결 상태 — 아이콘 버튼 */}
+              <button onClick={()=>{setSbUrlInp(getSbUrl());setSbAnonInp(getSbAnon());setSbModal(true);}}
+                title={sbConfigOk?"Supabase 연결됨 (클릭하여 설정)":"Supabase 미설정 (클릭하여 설정)"}
+                style={{
+                  width:34, height:34,
+                  background:sbConfigOk?C.grnBg:"#fee2e2",
+                  border:`1.5px solid ${sbConfigOk?"#86efac":"#fca5a5"}`,
+                  borderRadius:10, cursor:"pointer",
+                  fontSize:16, display:"flex", alignItems:"center", justifyContent:"center",
+                  flexShrink:0,
+                }}>
+                {sbConfigOk?"🔗":"⚠️"}
+              </button>
+
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 탭 — 모바일에서만 표시 */}
+      <div className="pc-hide-tab" style={{background:C.white,borderBottom:`1px solid ${C.border}`}}>
+        <div style={{maxWidth:640,margin:"0 auto",display:"flex"}}>
+          {[{k:"form",icon:"📝",label:"상품 입력"},{k:"list",icon:"📦",label:`목록 (${items.length})`}].map(t=>(
+            <button key={t.k} onClick={()=>setTab(t.k)}
+              className="tab-btn"
+              style={{flex:1,padding:"13px 8px",fontSize:13,fontWeight:700,fontFamily:"inherit",border:"none",
+                borderBottom:tab===t.k?`2.5px solid ${C.acc}`:"2.5px solid transparent",
+                background:"transparent",color:tab===t.k?C.acc:C.txtSm,cursor:"pointer",transition:"all .15s",minHeight:48, WebkitTapHighlightColor:'transparent'}}>
+              {t.icon} {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ══ 입력 탭 (모바일: 탭 전환 / PC: 항상 표시) ══ */}
+      {(tab==="form" || true) && (
+        <div className="form-grid page-pad pwa-content pc-three-col" id="pc-form-section" style={{padding:"20px 16px",maxWidth:1080,margin:"0 auto",display:"grid",gridTemplateColumns:"minmax(0,520px) minmax(0,340px)",gap:20,alignItems:"start"}}>
+        {/* ── 왼쪽: 입력 영역 ── */}
+        <div>
+
+          {/* 시장가 비교 카드 */}
+          <div style={{...card,marginBottom:20,padding:16}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.txtSm,letterSpacing:".08em",textTransform:"uppercase"}}>📊 시장가 비교</div>
+              <button onClick={()=>setShowMarket(v=>!v)}
+                style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 10px",fontSize:11,color:C.txtSm,cursor:"pointer",fontFamily:"inherit"}}>
+                {showMarket?"접기":"펼치기"}
+              </button>
+            </div>
+
+            {/* 번역 + 검색 링크 버튼 */}
+            <button onClick={()=>{ translateAndSearch(); setShowMarket(true); }}
+              disabled={xlLoad||!F.name.trim()}
+              style={{...btnGh,width:"100%",padding:"10px",fontSize:13,borderRadius:10,marginBottom:10,
+                opacity:(xlLoad||!F.name.trim())?.5:1,cursor:(xlLoad||!F.name.trim())?"not-allowed":"pointer",
+                display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+              {xlLoad
+                ? <><span style={{display:"inline-block",animation:"spin .6s linear infinite"}}>⟳</span> 번역 중...</>
+                : "🌐 번역 후 쇼피 검색링크 열기"}
+            </button>
+
+            {showMarket && (
+              <div>
+                {/* 안내 */}
+                <div style={{background:C.amberBg,border:`1px solid #fcd34d`,borderRadius:8,padding:"9px 12px",fontSize:12,color:"#92400e",marginBottom:12,lineHeight:1.6}}>
+                  💡 아래 링크로 쇼피에서 가격 확인 후, 시장 평균가를 직접 입력하세요
+                </div>
+
+                {/* 국가별 검색링크 + 가격입력 */}
+                {Object.entries(CURRENCIES).map(([code, cv]) => {
+                  const marketP  = +(marketPrices[code]||0);
+                  const myCostKRW = +F.costKRW;
+                  const avgKRW   = marketP ? Math.round(marketP * rates[cv.code]) : 0;
+                  const diff     = myCostKRW && avgKRW ? Math.round((myCostKRW/avgKRW-1)*100) : null;
+                  const isGood   = diff !== null && diff < -20;
+                  const isOk     = diff !== null && diff >= -20 && diff <= 0;
+                  const isHigh   = diff !== null && diff > 0;
+                  return (
+                    <div key={code} style={{borderBottom:`1px solid ${C.border}`,padding:"10px 0",display:"grid",gridTemplateColumns:"1fr auto",gap:8,alignItems:"center"}}>
+                      <div>
+                        {/* 국가명 + 검색 링크 */}
+                        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
+                          <span style={{fontSize:12,fontWeight:700,color:C.txt}}>{cv.name}</span>
+                          <span style={{fontSize:10,color:C.txtSm}}>({cv.code})</span>
+                          {xlResult && (
+                            <a href={`${cv.searchUrl}${encodeURIComponent(xlResult.localMap?.[code]||xlResult.en||F.name)}`}
+                              target="_blank" rel="noreferrer"
+                              style={{fontSize:10,color:C.acc,fontWeight:600,textDecoration:"none",
+                                background:C.accLight,border:`1px solid #fcd5c8`,borderRadius:4,padding:"1px 6px"}}>
+                              쇼피 검색 ↗
+                            </a>
+                          )}
+                        </div>
+                        {/* 가격 입력 */}
+                        <div style={{display:"flex",alignItems:"center",gap:6}}>
+                          <span style={{fontSize:11,color:C.txtSm,minWidth:20}}>{cv.sym}</span>
+                          <input
+                            type="number"
+                            placeholder="시장 평균가 입력"
+                            value={marketPrices[code]||""}
+                            onChange={e=>setMarketPrices(p=>({...p,[code]:e.target.value}))}
+                            style={{...inp,padding:"6px 10px",fontSize:12,width:140}}
+                            onFocus={e=>e.target.style.borderColor=C.acc}
+                            onBlur={e=>e.target.style.borderColor=C.border}
+                          />
+                          {marketP > 0 && (
+                            <span style={{fontSize:10,color:C.txtSm,whiteSpace:"nowrap"}}>
+                              ≈ {avgKRW.toLocaleString()}원
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      {/* 판정 배지 */}
+                      <div style={{textAlign:"center",minWidth:60}}>
+                        {diff === null ? (
+                          <span style={{fontSize:10,color:C.txtSm}}>—</span>
+                        ) : (
+                          <div>
+                            <div style={{fontSize:10,fontWeight:700,padding:"3px 7px",borderRadius:5,whiteSpace:"nowrap",
+                              background:isGood?"#dcfce7":isHigh?"#fee2e2":"#fef3c7",
+                              color:isGood?C.grn:isHigh?"#dc2626":"#92400e"}}>
+                              {isGood?"✅ 마진 가능":isHigh?"❌ 매입가 높음":"⚠️ 마진 주의"}
+                            </div>
+                            <div style={{fontSize:10,color:C.txtSm,marginTop:2,fontFamily:"'DM Mono',monospace"}}>
+                              {diff>0?"+":""}{diff}%
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* 전체 초기화 */}
+                {Object.values(marketPrices).some(v=>+v>0) && (
+                  <button onClick={()=>setMarketPrices({})}
+                    style={{marginTop:10,background:"none",border:`1px solid ${C.border}`,color:C.txtSm,
+                      borderRadius:6,padding:"5px 12px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>
+                    입력값 초기화
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+                    {/* 상품 정보 카드 */}
+          <div style={{...card,marginBottom:16,padding:18}}>
+            <Sec title="기본 정보" no="1"/>
+
+            {/* 상품명 */}
+            <div style={{marginBottom:14}}>
+              <label style={lbl}>상품명 *</label>
+              <input style={inp} placeholder="예: 무선 이어폰 ANC Pro" value={F.name}
+                onChange={e=>set("name")(e.target.value)}
+                onFocus={e=>e.target.style.borderColor=C.acc}
+                onBlur={e=>e.target.style.borderColor=C.border}/>
+            </div>
+
+            {/* 상품 설명 */}
+            <div style={{marginBottom:14}}>
+              <label style={lbl}>상품 설명 (선택)</label>
+              <textarea style={{...inp,minHeight:70,resize:"vertical"}} placeholder="상품 설명을 직접 입력하세요"
+                value={F.desc} onChange={e=>set("desc")(e.target.value)}
+                onFocus={e=>e.target.style.borderColor=C.acc}
+                onBlur={e=>e.target.style.borderColor=C.border}/>
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+              <div><label style={lbl}>카테고리</label>
+                <select style={inp} value={F.cat} onChange={e=>set("cat")(e.target.value)}>
+                  {["전자기기","패션/의류","뷰티/화장품","생활용품","스포츠","식품","기타"].map(c=><option key={c}>{c}</option>)}
+                </select>
+              </div>
+              <div><label style={lbl}>판매 국가</label>
+                <select style={inp} value={F.country} onChange={e=>set("country")(e.target.value)}>
+                  {Object.entries(CURRENCIES).map(([k,v])=><option key={k} value={k}>{v.name} ({v.code})</option>)}
+                </select>
+              </div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <div><label style={lbl}>재고 수량</label><input style={inp} type="number" value={F.stock} onChange={e=>set("stock")(e.target.value)} onFocus={e=>e.target.style.borderColor=C.acc} onBlur={e=>e.target.style.borderColor=C.border}/></div>
+              <div><label style={lbl}>무게 (kg)</label><input style={inp} type="number" placeholder="0.5" value={F.weight} onChange={e=>set("weight")(e.target.value)} onFocus={e=>e.target.style.borderColor=C.acc} onBlur={e=>e.target.style.borderColor=C.border}/></div>
+            </div>
+          </div>
+
+          {/* 가격 카드 */}
+          <div style={{...card,marginBottom:16,padding:18}}>
+            <Sec title="가격 & 원가" no="2"/>
+
+            {/* 세트 구성 */}
+            <div style={{background:C.amberBg,border:`1px solid #fcd34d`,borderRadius:10,padding:"11px 14px",marginBottom:14}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                <div style={{fontSize:12,fontWeight:700,color:"#92400e"}}>📦 세트 구성</div>
+                <div style={{fontSize:11,color:"#92400e",opacity:.8}}>
+                  {(+F.setBuy===1&&+F.setSell===1)
+                    ? "단품 판매"
+                    : `${+F.setBuy}개 매입 → ${+F.setSell}개 세트 판매`
+                  }
+                </div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <div>
+                  <label style={{...lbl,color:"#92400e"}}>매입 단위 (개)</label>
+                  <input style={{...inp,textAlign:"center",fontFamily:"'DM Mono',monospace",fontWeight:700}}
+                    type="number" min="1" placeholder="1"
+                    value={F.setBuy} onChange={e=>set("setBuy")(e.target.value)}
+                    onFocus={e=>e.target.style.borderColor="#f59e0b"}
+                    onBlur={e=>e.target.style.borderColor=C.border}/>
+                  <div style={{fontSize:10,color:"#92400e",marginTop:3,opacity:.8}}>몇 개씩 매입하나요?</div>
+                </div>
+                <div>
+                  <label style={{...lbl,color:"#92400e"}}>세트 구성 (개)</label>
+                  <input style={{...inp,textAlign:"center",fontFamily:"'DM Mono',monospace",fontWeight:700}}
+                    type="number" min="1" placeholder="1"
+                    value={F.setSell} onChange={e=>set("setSell")(e.target.value)}
+                    onFocus={e=>e.target.style.borderColor="#f59e0b"}
+                    onBlur={e=>e.target.style.borderColor=C.border}/>
+                  <div style={{fontSize:10,color:"#92400e",marginTop:3,opacity:.8}}>몇 개짜리 세트로 팔까요?</div>
+                </div>
+              </div>
+              {/* 세트 원가 미리보기 */}
+              {+F.costKRW>0 && (+F.setBuy!==1||+F.setSell!==1) && (()=>{
+                const setCost = (+F.costKRW) * ((+F.setSell||1)/(+F.setBuy||1));
+                return (
+                  <div style={{marginTop:10,padding:"8px 12px",background:"rgba(251,191,36,.15)",borderRadius:7,fontSize:12,color:"#92400e",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <span>세트 원가</span>
+                    <span style={{fontFamily:"'DM Mono',monospace",fontWeight:800,fontSize:13}}>
+                      {Math.round(setCost).toLocaleString()}원
+                      <span style={{fontSize:10,fontWeight:400,marginLeft:4,opacity:.7}}>
+                        ({won(+F.costKRW)} × {(+F.setSell||1)}/{(+F.setBuy||1)})
+                      </span>
+                    </span>
+                  </div>
+                );
+              })()}
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+              <div>
+                <label style={lbl}>개당 매입가 (원) *</label>
+                <input style={inp} type="number" placeholder="50000" value={F.costKRW}
+                  onChange={e=>set("costKRW")(e.target.value)}
+                  onFocus={e=>e.target.style.borderColor=C.acc} onBlur={e=>e.target.style.borderColor=C.border}/>
+              </div>
+              <div>
+                <label style={lbl}>쇼피 판매가 ({cur.code}) *</label>
+                <input style={inp} type="number" placeholder="159" value={F.sellLocal}
+                  onChange={e=>set("sellLocal")(e.target.value)}
+                  onFocus={e=>e.target.style.borderColor=C.acc} onBlur={e=>e.target.style.borderColor=C.border}/>
+              </div>
+            </div>
+            <div style={{marginBottom:14}}>
+              <label style={lbl}>정가 ({cur.code}) — 입력 시 할인율 자동 표시</label>
+              <input style={inp} type="number" placeholder="판매가보다 높은 금액 (선택)" value={F.origLocal}
+                onChange={e=>set("origLocal")(e.target.value)}
+                onFocus={e=>e.target.style.borderColor=C.acc} onBlur={e=>e.target.style.borderColor=C.border}/>
+            </div>
+          </div>
+
+          {/* 비용 카드 */}
+          <div style={{...card,marginBottom:20,padding:18}}>
+            <Sec title="수수료 & 비용" no="3"/>
+            {[{k:"shopFee",label:"쇼피 플랫폼 수수료",max:15,step:.5},{k:"payFee",label:"결제 처리 수수료",max:5,step:.1}].map(({k,label,max,step})=>(
+              <div key={k} style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+                <span style={{flex:1,fontSize:12.5,color:C.txtMd,fontWeight:500}}>{label}</span>
+                <input type="range" min={0} max={max} step={step} value={F[k]} onChange={e=>set(k)(+e.target.value)}
+                  style={{width:88,accentColor:C.acc}}/>
+                <span style={{fontFamily:"'DM Mono',monospace",fontSize:12,color:C.acc,fontWeight:700,minWidth:34,textAlign:"right"}}>{F[k]}%</span>
+              </div>
+            ))}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <div><label style={lbl}>배송비 ({cur.code})</label><input style={inp} type="number" value={F.shipLocal} onChange={e=>set("shipLocal")(e.target.value)} onFocus={e=>e.target.style.borderColor=C.acc} onBlur={e=>e.target.style.borderColor=C.border}/></div>
+              <div><label style={lbl}>기타 비용 (원)</label><input style={inp} type="number" value={F.etcKRW} onChange={e=>set("etcKRW")(e.target.value)} onFocus={e=>e.target.style.borderColor=C.acc} onBlur={e=>e.target.style.borderColor=C.border}/></div>
+            </div>
+          </div>
+
+          <button onClick={addItem} style={{...btnOr,width:"100%",padding:"14px",fontSize:14,borderRadius:12}}>
+            + 상품 추가 → 목록에서 확인
+          </button>
+        </div>{/* 왼쪽 입력 영역 끝 */}
+
+        {/* ── 가운데 컬럼: 마진 결과 + 상품 목록 (PC 전용) ── */}
+        <div className="pc-col-mid" style={{display:"none"}}>
+
+          {/* 마진 결과 요약 */}
+          {items.length > 0 && (()=>{
+            const totalItems = items.length;
+            const avgMargin  = Math.round(items.reduce((s,p)=>s+p.margin,0)/totalItems);
+            const totalRevKRW= items.reduce((s,p)=>s+p.sellKRW,0);
+            const best  = [...items].sort((a,b)=>b.margin-a.margin)[0];
+            const worst = [...items].sort((a,b)=>a.margin-b.margin)[0];
+            return (
+              <div style={{...card,padding:16,marginBottom:14}}>
+                <div style={{fontSize:11,fontWeight:700,color:C.txtSm,letterSpacing:".08em",textTransform:"uppercase",marginBottom:12}}>📊 마진 요약</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+                  {[
+                    {label:"등록 상품",  val:`${totalItems}개`,  color:C.txt},
+                    {label:"평균 마진",  val:`${avgMargin}%`,    color:avgMargin>=20?C.grn:avgMargin>=10?"#d97706":"#dc2626"},
+                    {label:"총 판매가",  val:won(totalRevKRW),   color:C.acc},
+                    {label:"최고 마진",  val:`${best?.name?.slice(0,6)}… ${best?.margin}%`, color:C.grn},
+                  ].map(({label,val,color})=>(
+                    <div key={label} style={{background:C.bg,borderRadius:8,padding:"10px 12px"}}>
+                      <div style={{fontSize:10,color:C.txtSm,marginBottom:3,fontWeight:600,textTransform:"uppercase",letterSpacing:".04em"}}>{label}</div>
+                      <div style={{fontSize:14,fontWeight:800,color}}>{val}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* 상품 목록 */}
+          <div style={{...card,overflow:"hidden"}}>
+            <div style={{padding:"11px 14px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.txtSm,letterSpacing:".08em",textTransform:"uppercase"}}>📦 상품 목록 ({items.length})</div>
+              {items.length>0 && <button onClick={()=>setItems([])} style={{background:"none",border:"none",color:C.txtSm,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>전체 삭제</button>}
+            </div>
+            {items.length===0
+              ? <div style={{textAlign:"center",padding:"32px 16px",color:C.txtSm,fontSize:12}}>
+                  <div style={{fontSize:28,marginBottom:8,opacity:.3}}>📦</div>
+                  상품을 추가하면 여기에 표시돼요
+                </div>
+              : <div style={{maxHeight:520,overflowY:"auto"}}>
+                  {items.map((p,i)=>{
+                    const disc = p.origLocal?Math.round((1-p.sellLocal/p.origLocal)*100):null;
+                    return (
+                      <div key={p.id} style={{padding:"11px 14px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:10}}>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
+                            <span style={{fontSize:12,fontWeight:700,color:C.txt,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:100}}>{p.name}</span>
+                            <span style={{fontSize:10,color:C.txtSm,flexShrink:0}}>{p.cur.name}</span>
+                            {p.isSet && <span style={{fontSize:9,fontWeight:700,background:"#fef3c7",color:"#92400e",borderRadius:4,padding:"1px 5px",flexShrink:0}}>세트</span>}
+                          </div>
+                          <div style={{display:"flex",gap:8,fontSize:11,flexWrap:"wrap"}}>
+                            <span style={{color:C.acc,fontWeight:600}}>{p.cur.sym}{(+p.sellLocal).toLocaleString()}</span>
+                            <span style={{color:C.txtSm}}>≈ {won(p.sellKRW)}</span>
+                            <span style={{fontWeight:700,color:p.margin>=20?C.grn:p.margin>=10?"#d97706":"#dc2626"}}>{p.margin}%</span>
+                          </div>
+                        </div>
+                        <div style={{display:"flex",gap:4",flexShrink:0}}>
+                          <button onClick={()=>setSheet(p)} style={{background:C.accLight,border:`1px solid #fcd5c8`,color:C.acc,borderRadius:6,padding:"4px 8px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>시트</button>
+                          <button onClick={()=>setItems(x=>x.filter((_,j)=>j!==i))} style={{background:"#fee2e2",border:"1px solid #fca5a5",color:"#dc2626",borderRadius:6,padding:"4px 8px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>✕</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+            }
+          </div>
+        </div>{/* 가운데 컬럼 끝 */}
+
+        {/* ── 오른쪽: 실시간 자동검사 패널 ── */}
+        <div className="insp-panel" style={{position:"sticky",top:16}}>
+          {/* 모바일: 토글 헤더 */}
+          <div
+            onClick={()=>setInspOpen(o=>!o)}
+            style={{...card,padding:"12px 16px",marginBottom:inspOpen?10:0,display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer",userSelect:"none"}}
+          >
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <div style={{
+                width:32,height:32,borderRadius:8,
+                background: inspection.errors>0?"#fee2e2": inspection.warns>0?"#fef3c7":"#dcfce7",
+                display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0
+              }}>
+                {inspection.errors>0?"🚨": inspection.warns>0?"⚠️":"✅"}
+              </div>
+              <div>
+                <div style={{fontSize:13,fontWeight:800,color:C.txt}}>규정 자동검사</div>
+                <div style={{fontSize:11,color:C.txtSm,marginTop:1}}>
+                  {inspection.errors>0
+                    ? <span style={{color:"#dc2626",fontWeight:700}}>오류 {inspection.errors}개 수정 필요</span>
+                    : inspection.warns>0
+                    ? <span style={{color:"#d97706",fontWeight:700}}>경고 {inspection.warns}개</span>
+                    : <span style={{color:C.grn,fontWeight:700}}>모든 항목 통과</span>
+                  }
+                </div>
+              </div>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              {/* 점수 링 */}
+              <div style={{position:"relative",width:40,height:40,flexShrink:0}}>
+                <svg width="40" height="40" viewBox="0 0 40 40">
+                  <circle cx="20" cy="20" r="16" fill="none" stroke={C.border} strokeWidth="4"/>
+                  <circle cx="20" cy="20" r="16" fill="none"
+                    stroke={inspection.score>=80?C.grn:inspection.score>=50?"#d97706":"#dc2626"}
+                    strokeWidth="4"
+                    strokeDasharray={`${inspection.score * 1.005} ${100.5 - inspection.score * 1.005}`}
+                    strokeDashoffset="25.1"
+                    strokeLinecap="round"
+                    style={{transition:"stroke-dasharray .4s"}}
+                    transform="rotate(-90 20 20)"
+                  />
+                </svg>
+                <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:C.txt}}>{inspection.score}</div>
+              </div>
+              <span style={{fontSize:16,color:C.txtSm,transition:"transform .2s",display:"inline-block",transform:inspOpen?"rotate(180deg)":"rotate(0deg)"}}>▾</span>
+            </div>
+          </div>
+
+          {inspOpen && (
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {inspection.groups.map(group=>(
+                <div key={group.id} style={{...card,overflow:"hidden"}}>
+                  {/* 그룹 헤더 */}
+                  <div style={{padding:"9px 14px",background:C.bg,borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                    <span style={{fontSize:11,fontWeight:700,color:C.txtMd,letterSpacing:".06em",textTransform:"uppercase"}}>
+                      { group.id==="name"?"📝 상품명"
+                      : group.id==="desc"?"📄 상품 설명"
+                      : group.id==="price"?"💰 가격 정책"
+                      : "📋 카테고리 규정"}
+                    </span>
+                    <div style={{display:"flex",gap:4}}>
+                      {group.items.filter(i=>i.level==="error").length>0 &&
+                        <span style={{fontSize:10,fontWeight:700,background:"#fee2e2",color:"#b91c1c",borderRadius:4,padding:"1px 6px"}}>{group.items.filter(i=>i.level==="error").length} 오류</span>}
+                      {group.items.filter(i=>i.level==="warn").length>0 &&
+                        <span style={{fontSize:10,fontWeight:700,background:"#fef3c7",color:"#92400e",borderRadius:4,padding:"1px 6px"}}>{group.items.filter(i=>i.level==="warn").length} 경고</span>}
+                      {group.items.every(i=>i.level==="pass") &&
+                        <span style={{fontSize:10,fontWeight:700,background:"#dcfce7",color:"#15803d",borderRadius:4,padding:"1px 6px"}}>통과</span>}
+                    </div>
+                  </div>
+                  {/* 항목 목록 */}
+                  {group.items.map((item,idx)=>(
+                    <div key={idx} style={{
+                      display:"flex",alignItems:"flex-start",gap:8,
+                      padding:"8px 14px",
+                      borderBottom:idx<group.items.length-1?`1px solid ${C.border}`:"none",
+                      background: item.level==="error"?"rgba(220,38,38,.04)"
+                                : item.level==="warn" ?"rgba(217,119,6,.04)"
+                                : "transparent",
+                      transition:"background .15s"
+                    }}>
+                      <span style={{
+                        fontSize:13,flexShrink:0,marginTop:1,
+                        filter: item.level==="pass"?"grayscale(0.2)":"none"
+                      }}>
+                        {item.level==="error"?"🔴": item.level==="warn"?"🟡":"🟢"}
+                      </span>
+                      <span style={{
+                        fontSize:12,lineHeight:1.5,
+                        color: item.level==="error"?"#b91c1c"
+                             : item.level==="warn" ?"#92400e"
+                             : C.txtMd,
+                        fontWeight: item.level==="pass"?400:500
+                      }}>{item.msg}</span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+
+              {/* 전체 요약 */}
+              <div style={{...card,padding:"12px 16px",background: inspection.errors===0&&inspection.warns===0?C.grnBg: inspection.errors>0?"#fff1f2":"#fffbeb",border:`1px solid ${inspection.errors===0&&inspection.warns===0?"#86efac":inspection.errors>0?"#fca5a5":"#fcd34d"}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:inspection.errors===0&&inspection.warns===0?0:6}}>
+                  <span style={{fontSize:12,fontWeight:700,color:C.txt}}>종합 점수</span>
+                  <span style={{fontFamily:"'DM Mono',monospace",fontSize:16,fontWeight:800,color:inspection.score>=80?C.grn:inspection.score>=50?"#d97706":"#dc2626"}}>{inspection.score}점</span>
+                </div>
+                {inspection.errors>0 && <div style={{fontSize:11,color:"#b91c1c"}}>⛔ 오류 {inspection.errors}개를 수정해야 등록할 수 있어요</div>}
+                {inspection.errors===0&&inspection.warns>0 && <div style={{fontSize:11,color:"#92400e"}}>⚠️ 경고 {inspection.warns}개 — 수정하면 판매율이 올라요</div>}
+                {inspection.errors===0&&inspection.warns===0 && <div style={{fontSize:11,color:C.grn,marginTop:2}}>🎉 모든 규정을 통과했어요! 등록해도 좋아요</div>}
+              </div>
+            </div>
+          )}
+        </div>{/* 오른쪽 검사 패널 끝 */}
+
+      </div>
+      )}
+
+      {/* ══ 목록 탭 (모바일 전용) ══ */}
+      {tab==="list" && (
+        <div style={{padding:"20px 16px",maxWidth:640,margin:"0 auto"}}>
+          {items.length===0 ? (
+            <div style={{...card,textAlign:"center",padding:"60px 20px"}}>
+              <div style={{fontSize:48,marginBottom:14,opacity:.3}}>📦</div>
+              <div style={{fontSize:15,fontWeight:700,color:C.txtMd,marginBottom:6}}>등록된 상품이 없어요</div>
+              <div style={{fontSize:13,color:C.txtSm,marginBottom:20}}>상품을 입력하고 마진을 분석해 보세요</div>
+              <button onClick={()=>setTab("form")} style={{...btnOr,padding:"10px 24px"}}>📝 상품 입력하러 가기</button>
+            </div>
+          ) : (
+            <>
+              {/* 요약 */}
+              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:16}}>
+                {(()=>{
+                  const avg=items.reduce((a,p)=>a+p.margin,0)/items.length;
+                  const best=[...items].sort((a,b)=>b.margin-a.margin)[0];
+                  const worst=[...items].sort((a,b)=>a.margin-b.margin)[0];
+                  return [
+                    {label:"총 상품",val:`${items.length}개`,color:C.txt,bg:C.white},
+                    {label:"평균 마진",val:`${ff(avg)}%`,color:mCol(avg),bg:C.white},
+                    {label:"최고 마진",val:best.name.slice(0,5)+(best.name.length>5?"…":""),color:C.grn,bg:C.grnBg},
+                    {label:"주의 상품",val:worst.margin<15?worst.name.slice(0,5)+(worst.name.length>5?"…":""):"없음",color:worst.margin<15?"#dc2626":C.txtSm,bg:worst.margin<15?"#fee2e2":C.white},
+                  ];
+                })().map(({label,val,color,bg})=>(
+                  <div key={label} style={{background:bg,border:`1px solid ${C.border}`,borderRadius:10,padding:"11px 8px",textAlign:"center",boxShadow:`0 1px 4px ${C.shadow}`}}>
+                    <div style={{fontSize:10,color:C.txtSm,marginBottom:5,fontWeight:600,letterSpacing:".04em",textTransform:"uppercase"}}>{label}</div>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:14,fontWeight:700,color,wordBreak:"break-all"}}>{val}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{display:"flex",justifyContent:"flex-end",marginBottom:12}}>
+                <button onClick={()=>{if(window.confirm("전체 삭제할까요?"))setItems([]);}}
+                  style={{background:C.white,border:`1px solid ${C.border}`,color:C.txtSm,borderRadius:7,padding:"5px 14px",fontSize:11,cursor:"pointer",fontFamily:"inherit",fontWeight:600}}>
+                  전체 삭제
+                </button>
+              </div>
+
+              {items.map(p=>{
+                const m=mLbl(p.margin), barW=Math.min(Math.max(p.margin,0),60)/60*100;
+                return (
+                  <div key={p.id} style={{...card,marginBottom:14,overflow:"hidden"}}>
+                    <div style={{padding:"14px 16px 12px",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                      <div>
+                        <div style={{fontWeight:800,fontSize:14.5,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",color:C.txt}}>
+                          {p.name}
+                          <span style={{background:m.bg,color:m.c,padding:"2px 8px",borderRadius:5,fontSize:10,fontWeight:700}}>{m.t}</span>
+                        </div>
+                        <div style={{fontSize:11,color:C.txtSm,marginTop:4}}>{p.cat} · {p.cur.name} · 환율 {p.rate>=1?Math.round(p.rate).toLocaleString():p.rate.toFixed(4)} KRW</div>
+                      </div>
+                      <button onClick={()=>setItems(x=>x.filter(i=>i.id!==p.id))}
+                        style={{background:"none",border:`1px solid ${C.border}`,color:C.txtSm,cursor:"pointer",fontSize:13,padding:"3px 8px",flexShrink:0,lineHeight:1,borderRadius:6,fontWeight:700}}>✕</button>
+                    </div>
+
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)"}}>
+                      {[
+                        {label:"매입가",     val:won(p.costKRW),                              color:C.txtMd, bg:C.bg},
+                        {label:`판매가(${p.cur.code})`,val:`${p.cur.sym}${ff(p.sellLocal)}`,  color:C.txt,   bg:C.bg},
+                        {label:"원화 판매가",val:won(p.sellKRW),                              color:C.acc,   bg:C.accLight,bold:true},
+                        {label:"수수료",     val:won(p.feeKRW),                               color:C.txtSm, bg:C.bg},
+                        {label:"배송비",     val:won(p.shipKRW),                              color:C.txtSm, bg:C.bg},
+                        {label:"순이익",     val:`${p.profit>=0?"+":""}${won(p.profit)}`,     color:mCol(p.margin),bg:mLbl(p.margin).bg,bold:true},
+                      ].map(({label,val,color,bg,bold})=>(
+                        <div key={label} style={{background:bg,padding:"10px 8px",textAlign:"center",borderRight:`1px solid ${C.border}`,borderBottom:`1px solid ${C.border}`}}>
+                          <div style={{fontSize:10,color:C.txtSm,marginBottom:3,fontWeight:600}}>{label}</div>
+                          <div style={{fontFamily:"'DM Mono',monospace",fontSize:12,fontWeight:bold?700:600,color,wordBreak:"break-all"}}>{val}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div style={{padding:"12px 16px 10px"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",fontSize:11,marginBottom:6}}>
+                        <span style={{color:C.txtSm,fontWeight:600}}>마진율</span>
+                        <span style={{fontFamily:"'DM Mono',monospace",fontWeight:700,color:mCol(p.margin)}}>{ff(p.margin)}%</span>
+                      </div>
+                      <div style={{height:6,background:C.bgAlt,borderRadius:4,overflow:"hidden",border:`1px solid ${C.border}`}}>
+                        <div style={{height:"100%",width:`${barW}%`,background:`linear-gradient(90deg,${mCol(p.margin)},${mCol(p.margin)}cc)`,borderRadius:4,transition:"width .5s"}}></div>
+                      </div>
+                    </div>
+
+                    <div style={{display:"flex",gap:10,padding:"10px 16px 14px",borderTop:`1px solid ${C.border}`}}>
+                      <a href={`${p.cur.searchUrl}${encodeURIComponent(p.name)}`} target="_blank" rel="noreferrer"
+                        style={{...btnGh,flex:1,textAlign:"center",textDecoration:"none",display:"block",padding:"9px 8px"}}>
+                        🔍 쇼피 검색
+                      </a>
+                      <button onClick={()=>setSheet(p)} style={{...btnOr,flex:1,padding:"9px 8px",borderRadius:10}}>
+                        📋 등록 시트
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+
+              <button onClick={()=>setTab("form")}
+                style={{width:"100%",background:C.white,border:`1.5px dashed ${C.borderMd}`,color:C.txtSm,borderRadius:12,padding:"13px",fontSize:13,cursor:"pointer",fontFamily:"inherit",fontWeight:600,marginTop:4}}>
+                + 상품 더 추가하기
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── Supabase 설정 모달 ── */}
+      {sbModal && (
+        <div onClick={e=>{ if(e.target===e.currentTarget && sbConfigOk) setSbModal(false); }}
+          style={{position:"fixed",inset:0,background:"rgba(26,15,10,.55)",backdropFilter:"blur(10px)",zIndex:1200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:20,width:"100%",maxWidth:460,boxShadow:`0 24px 60px rgba(238,77,45,.12)`}}>
+
+            {/* 헤더 */}
+            <div style={{padding:"20px 22px 16px",borderBottom:`1px solid ${C.border}`}}>
+              <div style={{display:"flex",alignItems:"center",gap:12}}>
+                <div style={{width:40,height:40,borderRadius:12,background:C.accLight,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>🔗</div>
+                <div>
+                  <div style={{fontSize:15,fontWeight:800,color:C.txt}}>Supabase 연결 설정</div>
+                  <div style={{fontSize:11,color:C.txtSm,marginTop:1}}>프로젝트 URL과 Anon Key를 입력해 주세요</div>
+                </div>
+                {sbConfigOk && <button onClick={()=>setSbModal(false)} style={{marginLeft:"auto",background:C.bg,border:`1px solid ${C.border}`,color:C.txtSm,borderRadius:8,width:30,height:30,cursor:"pointer",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>}
+              </div>
+            </div>
+
+            <div style={{padding:"18px 22px 22px"}}>
+              {/* 안내 */}
+              <div style={{background:C.accLight,border:`1px solid #fcd5c8`,borderRadius:10,padding:"11px 14px",marginBottom:16,fontSize:12,color:C.txtMd,lineHeight:1.7}}>
+                <div style={{fontWeight:700,marginBottom:4}}>📌 값 확인 방법</div>
+                <div>1. <a href="https://supabase.com/dashboard" target="_blank" rel="noreferrer" style={{color:C.acc,fontWeight:600}}>supabase.com/dashboard</a> 접속</div>
+                <div>2. 프로젝트 선택 → <strong style={{fontWeight:600}}>Settings → API</strong></div>
+                <div>3. Project URL + anon public key 복사</div>
+              </div>
+
+              {/* Project URL */}
+              <div style={{marginBottom:12}}>
+                <label style={{...lbl,marginBottom:5}}>Project URL</label>
+                <input style={{...inp,fontFamily:"'DM Mono',monospace",fontSize:12}}
+                  placeholder="https://xxxxxxxxxxxxxxxx.supabase.co"
+                  value={sbUrlInp}
+                  onChange={e=>setSbUrlInp(e.target.value)}
+                  onFocus={e=>e.target.style.borderColor=C.acc}
+                  onBlur={e=>e.target.style.borderColor=C.border}
+                />
+              </div>
+
+              {/* Anon Key */}
+              <div style={{marginBottom:18}}>
+                <label style={{...lbl,marginBottom:5}}>Anon public key</label>
+                <textarea style={{...inp,minHeight:72,resize:"vertical",fontFamily:"'DM Mono',monospace",fontSize:11,lineHeight:1.5}}
+                  placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                  value={sbAnonInp}
+                  onChange={e=>setSbAnonInp(e.target.value)}
+                  onFocus={e=>e.target.style.borderColor=C.acc}
+                  onBlur={e=>e.target.style.borderColor=C.border}
+                />
+              </div>
+
+              {/* 현재 상태 */}
+              {sbConfigOk && (
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14,padding:"8px 12px",background:C.grnBg,borderRadius:8,border:"1px solid #86efac"}}>
+                  <span style={{fontSize:13}}>✅</span>
+                  <span style={{fontSize:11,color:C.grn,fontWeight:600,flex:1}}>연결 설정됨: {getSbUrl().replace('https://','').split('.')[0]}...</span>
+                  <button onClick={handleClearSbConfig}
+                    style={{background:"none",border:"1px solid #86efac",color:C.grn,borderRadius:5,padding:"2px 8px",fontSize:10,cursor:"pointer",fontWeight:600,fontFamily:"inherit"}}>
+                    초기화
+                  </button>
+                </div>
+              )}
+
+              <div style={{display:"flex",gap:10}}>
+                {sbConfigOk && (
+                  <button onClick={()=>setSbModal(false)} style={{...btnGh,flex:1}}>취소</button>
+                )}
+                <button onClick={handleSaveSbConfig} style={{...btnOr,flex:2,padding:"12px"}}>
+                  🔗 저장하고 연결하기
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+
+            {sheet && <Sheet p={sheet}/>}
+
+      {toast && (
+        <div style={{position:"fixed",bottom:28,left:"50%",transform:"translateX(-50%)",background:C.txt,color:"#fff",padding:"10px 24px",borderRadius:30,fontSize:13,fontWeight:700,zIndex:9999,pointerEvents:"none",whiteSpace:"nowrap",boxShadow:"0 6px 24px rgba(26,15,10,.25)"}}>
+          {toast}
+        </div>
+      )}
+
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500;600&family=Noto+Sans+KR:wght@400;500;700;800&display=swap');
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        input[type=range] { height: 4px; cursor: pointer; }
+        select option { background: #fff; color: #1A0F0A; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        button:hover { opacity: 0.88; }
+        a:hover { opacity: 0.88; }
+      `}</style>
+    </div>
+  );
+}
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+  <!-- PWA 모바일 하단 탭바 -->
+  <nav class="mobile-bottom-nav" id="mobileNav">
+    <a href="index.html" class="active" id="navCalc">
+      <div class="nav-icon-wrap"><span class="nav-icon">🧮</span></div>
+      <span>계산기</span>
+    </a>
+    <a href="orders.html" id="navOrders">
+      <div class="nav-icon-wrap"><span class="nav-icon">📦</span></div>
+      <span>주문관리</span>
+    </a>
+  </nav>
+
+  <!-- PWA 서비스워커 + 동적 manifest -->
+  <script>
+    // 현재 경로 기반으로 manifest 동적 생성
+    (function() {
+      const base    = window.location.pathname.replace(/\/[^/]*$/, '') + '/';
+      const origin  = window.location.origin;
+      const manifest = {
+        name: "쇼피 셀러 툴",
+        short_name: "쇼피툴",
+        description: "쇼피 셀러를 위한 마진 계산기 & 주문 관리",
+        start_url: base + "index.html",
+        scope: base,
+        display: "standalone",
+        orientation: "portrait",
+        background_color: "#FFF8F5",
+        theme_color: "#EE4D2D",
+        lang: "ko",
+        icons: [
+          { src: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' rx='32' fill='%23EE4D2D'/><text x='50%25' y='55%25' font-size='100' text-anchor='middle' dominant-baseline='middle' fill='white' font-family='sans-serif' font-weight='bold'>S</text></svg>", sizes: "192x192", type: "image/svg+xml", purpose: "any maskable" },
+          { src: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='80' fill='%23EE4D2D'/><text x='50%25' y='55%25' font-size='280' text-anchor='middle' dominant-baseline='middle' fill='white' font-family='sans-serif' font-weight='bold'>S</text></svg>", sizes: "512x512", type: "image/svg+xml", purpose: "any maskable" }
+        ],
+        shortcuts: [
+          { name: "주문 관리", short_name: "주문", url: base + "orders.html" },
+          { name: "마진 계산기", short_name: "계산기", url: base + "index.html" }
+        ]
+      };
+      const blob = new Blob([JSON.stringify(manifest)], {type: 'application/json'});
+      const url  = URL.createObjectURL(blob);
+      document.getElementById('pwa-manifest').href = url;
+    })();
+
+    // 서비스워커 등록
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        const swUrl = window.location.pathname.replace(/\/[^/]*$/, '') + '/sw.js';
+        navigator.serviceWorker.register(swUrl)
+          .then(reg => console.log('SW 등록:', reg.scope))
+          .catch(err => console.log('SW 실패:', err));
+      });
+    }
+
+    // iOS Safari PWA 설치 힌트
+    const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
+    if (isIOS && !isStandalone && !localStorage.getItem('pwa-hint-shown')) {
+      setTimeout(() => {
+        const hint = document.createElement('div');
+        hint.style.cssText = 'position:fixed;bottom:70px;left:50%;transform:translateX(-50%);background:#1A0F0A;color:#fff;padding:12px 18px;border-radius:12px;font-size:12px;z-index:999;text-align:center;max-width:280px;box-shadow:0 4px 20px rgba(0,0,0,0.3);';
+        hint.innerHTML = '📱 홈 화면에 추가하려면<br>Safari → 공유 → 홈 화면에 추가 <button onclick="this.parentElement.remove();localStorage.setItem('pwa-hint-shown',1)" style="background:none;border:none;color:#ffa07a;font-size:14px;cursor:pointer;margin-left:8px;">✕</button>';
+        document.body.appendChild(hint);
+        setTimeout(() => hint.remove(), 6000);
+      }, 3000);
+    }
+  </script>
+</body>
+</html>
