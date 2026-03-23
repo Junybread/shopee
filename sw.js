@@ -1,4 +1,4 @@
-const CACHE = 'shopee-tool-v4';
+const CACHE = 'shopee-tool-v5';
 const ASSETS = [
   '/shopee/',
   '/shopee/index.html',
