@@ -1446,7 +1446,7 @@ function App() {
               );
             })()}
           </div>
-          </div>{/* padding 16px 20px 끝 (880) */}
+          </div>
 
           {/* ── 하단 버튼 ── */}
           <div style={{display:"flex",flexWrap:"wrap",gap:8,padding:"12px 20px 18px",borderTop:`1px solid ${C.border}`,position:"sticky",bottom:0,background:C.white}}>
@@ -1982,9 +1982,10 @@ function App() {
           <button onClick={addItem} style={{...btnOr,width:"100%",padding:"14px",fontSize:14,borderRadius:12}}>
             + 상품 추가 → 목록에서 확인
           </button>
-        </div>{/* 왼쪽 입력 영역 끝 */}
-      </div>{/* form-grid pc-three-col 끝 */}
-      </div>{/* showMarket 카드 끝 보정 — 구조 균형 */}
+        </div>
+        {/* 왼쪽 입력 영역 끝 */}
+      </div>
+      </div>
 
         {/* ── 가운데 컬럼: 마진 결과 + 상품 목록 (PC 전용) ── */}
         <div className="pc-col-mid" style={{display:"none"}}>
